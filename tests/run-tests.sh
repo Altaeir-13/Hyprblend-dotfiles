@@ -23,13 +23,12 @@ CLR_RST='\e[0m'
 
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/hybrid-rice-test-suite.XXXXXX")"
 # Ensure test suite operates under a simulated Arch Linux environment on non-Arch hosts (e.g. Ubuntu GitHub Actions runner)
-TEST_ARCH_OS_RELEASE="$TEST_ROOT/os-release-arch"
-printf 'ID=arch\nID_LIKE=\n' > "$TEST_ARCH_OS_RELEASE"
-export OS_RELEASE_FILE="$TEST_ARCH_OS_RELEASE"
+printf 'ID=arch\nID_LIKE=\n' > "${REPO_ROOT}/os-release"
 cleanup_suite() {
     chmod -R u+w "$TEST_ROOT" 2>/dev/null || true
     rm -rf "$TEST_ROOT" 2>/dev/null || true
     rm -rf "${REPO_ROOT}/cache/.test_dry_run_sentinel" 2>/dev/null || true
+    rm -f "${REPO_ROOT}/os-release" 2>/dev/null || true
 }
 trap cleanup_suite EXIT INT TERM
 
