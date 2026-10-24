@@ -63,6 +63,15 @@ function check_install_prerequisites() {
     fi
   done
 
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    if (( ${#missing[@]} > 0 )); then
+      echo -e "${STY_YELLOW}[DRY-RUN] Prerequisite commands missing: ${missing[*]} (installation simulated, zero packages modified).${STY_RST}"
+    else
+      echo -e "${STY_YELLOW}[DRY-RUN] All base prerequisite commands present: ${required_cmds[*]}${STY_RST}"
+    fi
+    return 0
+  fi
+
   if (( ${#missing[@]} > 0 )); then
     if command -v pacman >/dev/null 2>&1; then
       echo -e "${STY_YELLOW}[$0]: Installing missing base prerequisite packages via pacman: ${missing[*]}${STY_RST}"

@@ -338,6 +338,31 @@ rm -f "${REPO_ROOT}/cache/.test_dry_run_sentinel"
 dry_files_count="$(find "$sb_dry/home" -mindepth 1 | wc -l)"
 assert_eq "$dry_files_count" "0" "./setup install --dry-run não cria nenhum arquivo ou diretório no HOME alvo"
 
+# Test dry-run with missing prerequisite commands (rsync, etc.)
+sb_dry_prereq="$(create_sandbox "dryrun-prereq")"
+dry_prereq_res=0
+(
+    mkdir -p "$sb_dry_prereq/clean-bin"
+    for tool in bash sed grep sort find; do
+        tool_path="$(which "$tool")"
+        ln -s "$tool_path" "$sb_dry_prereq/clean-bin/$tool"
+    done
+    export PATH="$sb_dry_prereq/clean-bin"
+    export HOME="$sb_dry_prereq/home"
+    export DRY_RUN=true
+    export REPO_ROOT="${REPO_ROOT}"
+    source "${REPO_ROOT}/sdata/lib/environment-variables.sh"
+    source "${REPO_ROOT}/sdata/lib/functions.sh"
+
+    check_install_prerequisites >/dev/null 2>&1
+) || dry_prereq_res=$?
+
+if (( dry_prereq_res == 0 )); then
+    pass "--dry-run não tenta instalar pacotes nem modificar arquivos mesmo com comandos ausentes (ex: rsync)"
+else
+    fail "--dry-run falhou ou tentou executar comandos com pré-requisitos ausentes"
+fi
+
 printf "\n${CLR_CYAN}=== 3. Testes de Cópia, Backup, Preservação de Arquivos Locais e Reexecução ===${CLR_RST}\n"
 
 sb_hyb="$(create_sandbox "hybrid-install")"
@@ -412,6 +437,33 @@ BACKUP_DIR="$sb_hyb/home/ii-original-dots-backup" \
 assert_eq "$(cat "$sb_hyb/home/.config/caelestia/shell.json")" '{"user_modified_after_install": true}' "Reexecução preserva shell.json editado pelo usuário"
 assert_file_exists "$sb_hyb/home/.config/caelestia/shell.json.new" "Reexecução grava atualização em shell.json.new"
 assert_eq "$(cat "$sb_hyb/home/ii-original-dots-backup/.config/fuzzel/fuzzel.ini")" "old_fuzzel_config" "Reexecução não sobrescreve backup original em BACKUP_DIR"
+
+# User adds custom personal files directly into managed directories
+mkdir -p "$sb_hyb/home/.config/quickshell/ii" \
+         "$sb_hyb/home/.config/quickshell/caelestia-hybrid" \
+         "$sb_hyb/home/.config/hypr/hyprland"
+echo "user_custom_widget" > "$sb_hyb/home/.config/quickshell/ii/my_custom_widget.qml"
+echo "user_custom_module" > "$sb_hyb/home/.config/quickshell/caelestia-hybrid/my_custom_module.qml"
+echo "user_custom_rule" > "$sb_hyb/home/.config/hypr/hyprland/my_extra.conf"
+
+PATH="$sb_hyb/bin:$PATH" \
+MOCK_STATE_DIR="$sb_hyb/mock-state" \
+HOME="$sb_hyb/home" \
+XDG_CONFIG_HOME="$sb_hyb/home/.config" \
+XDG_DATA_HOME="$sb_hyb/home/.local/share" \
+XDG_STATE_HOME="$sb_hyb/home/.local/state" \
+XDG_CACHE_HOME="$sb_hyb/home/.cache" \
+XDG_BIN_HOME="$sb_hyb/home/.local/bin" \
+BACKUP_DIR="$sb_hyb/home/ii-original-dots-backup" \
+./setup install-files -p hybrid -f >/dev/null
+
+sync_bk="$(find "$sb_hyb/home" -maxdepth 2 -type d -name "ii-original-dots-backup*" | grep -v "^$sb_hyb/home/ii-original-dots-backup$" | head -n 1)"
+[[ -z "$sync_bk" ]] && sync_bk="$sb_hyb/home/ii-original-dots-backup"
+
+assert_file_exists "$sync_bk/sync-deleted/ii/my_custom_widget.qml" "Reexecução: arquivo personalizado em quickshell/ii é salvo em backup antes do sync"
+assert_file_exists "$sync_bk/sync-deleted/caelestia-hybrid/my_custom_module.qml" "Reexecução: arquivo personalizado em quickshell/caelestia-hybrid é salvo em backup antes do sync"
+assert_file_exists "$sync_bk/sync-deleted/hyprland/my_extra.conf" "Reexecução: arquivo personalizado em hypr/hyprland é salvo em backup antes do sync"
+assert_file_exists "$sb_hyb/home/.local/bin/ui-switch.sh" "Script ui-switch.sh instalado em XDG_BIN_HOME (~/.local/bin)"
 
 printf "\n${CLR_CYAN}=== 4. Testes de Transição entre Perfis (minimal <-> hybrid) e Paridade Legacy vs Exp ===${CLR_RST}\n"
 
@@ -877,6 +929,24 @@ fi
     [[ "${makepkg_force[*]}" == "makepkg -Afsi --noconfirm" ]] || exit 4
 ) && pass "Auditoria AUR/Pacman: modo interativo omite --noconfirm e modo force propaga --noconfirm" \
   || fail "Auditoria AUR/Pacman: flags de confirmação inconsistentes entre modos"
+
+# Test 8.10: Auditoria de remoção de pacotes obsoletos (sem -Rdd e respeito ao dry-run)
+(
+    # Ensure -Rdd invocation is eliminated from the codebase
+    if grep -E "pacman[[:space:]]+.*-Rdd" "${REPO_ROOT}/sdata/dist-arch/install-deps.sh" >/dev/null 2>&1; then
+        exit 1
+    fi
+
+    # Dry-run test of remove_deprecated_dependencies function
+    export DRY_RUN=true
+    export ask=false
+    source "${REPO_ROOT}/sdata/lib/environment-variables.sh"
+    source "${REPO_ROOT}/sdata/lib/functions.sh"
+    eval "$(sed -n '/^remove_deprecated_dependencies(){/,/^}/p' "${REPO_ROOT}/sdata/dist-arch/install-deps.sh")"
+
+    remove_deprecated_dependencies >/dev/null 2>&1 || exit 2
+) && pass "Auditoria de pacotes: eliminação estrita de 'pacman -Rdd' e remoção segura com verificação" \
+  || fail "Auditoria de pacotes: pacman -Rdd ainda presente ou falha em remove_deprecated_dependencies"
 
 printf "\n=============================================================================\n"
 printf "Resumo dos Testes: ${CLR_GREEN}%d aprovados${CLR_RST}, ${CLR_RED}%d falharam${CLR_RST} (total: %d)\n" \

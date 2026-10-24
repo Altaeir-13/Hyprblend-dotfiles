@@ -20,13 +20,62 @@ install-yay(){
 }
 
 remove_deprecated_dependencies(){
-  printf "${STY_CYAN}[$0]: Removing deprecated dependencies:${STY_RST}\n"
   local list=()
   list+=(illogical-impulse-{microtex,pymyc-aur,oneui4-icons-git})
   list+=(hyprland-qtutils)
   list+=({quickshell,hyprutils,hyprpicker,hyprlang,hypridle,hyprland-qt-support,hyprland-qtutils,hyprlock,xdg-desktop-portal-hyprland,hyprcursor,hyprwayland-scanner,hyprland}-git)
   list+=(matugen-bin)
-  for i in ${list[@]};do try sudo pacman --noconfirm -Rdd $i;done
+
+  local found=()
+  local pkg
+  for pkg in "${list[@]}"; do
+    if pacman -Qq "$pkg" >/dev/null 2>&1; then
+      found+=("$pkg")
+    fi
+  done
+
+  if (( ${#found[@]} == 0 )); then
+    return 0
+  fi
+
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Detected installed deprecated packages: ${found[*]}. Would request safe removal via 'pacman -R'.${STY_RST}"
+    return 0
+  fi
+
+  echo -e "${STY_YELLOW}[$0]: Detected deprecated packages from previous rice versions:${STY_RST}"
+  for pkg in "${found[@]}"; do
+    echo -e "  - ${STY_CYAN}${pkg}${STY_RST}"
+  done
+  echo -e "${STY_YELLOW}These legacy packages may conflict with current release dependencies.${STY_RST}"
+  echo -e "${STY_YELLOW}Policy: The installer will NEVER use destructive forced cascade removal. Only safe removal ('pacman -R') is permitted.${STY_RST}"
+
+  local do_remove=false
+  if $ask; then
+    echo -e "${STY_BLUE}Would you like to safely remove these deprecated packages using 'pacman -R'? [y/N]${STY_RST}"
+    local p
+    read -p "====> " p
+    case $p in
+      [yY]*) do_remove=true ;;
+      *) echo -e "${STY_BLUE}[$0]: Skipping removal of deprecated packages.${STY_RST}" ;;
+    esac
+  else
+    # Force/unattended mode: attempt safe removal without bypassing dependency checks
+    echo -e "${STY_YELLOW}[$0]: Non-interactive mode: Attempting safe removal with standard dependency verification...${STY_RST}"
+    do_remove=true
+  fi
+
+  if [[ "$do_remove" == true ]]; then
+    if $ask; then
+      if ! sudo pacman -R "${found[@]}"; then
+        echo -e "${STY_YELLOW}[$0]: WARNING: Some deprecated packages could not be removed due to reverse dependencies. Continuing safely.${STY_RST}"
+      fi
+    else
+      if ! sudo pacman -R --noconfirm "${found[@]}"; then
+        echo -e "${STY_YELLOW}[$0]: WARNING: Some deprecated packages could not be removed due to reverse dependencies. Continuing safely.${STY_RST}"
+      fi
+    fi
+  fi
 }
 # NOTE: `implicitize_old_dependencies()` was for the old days when we just switch from dependencies.conf to local PKGBUILDs.
 # However, let's just keep it as references for other distros writing their `sdata/dist-<OS_GROUP_ID>/install-deps.sh`, if they need it.

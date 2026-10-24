@@ -25,6 +25,7 @@ case "${SKIP_QUICKSHELL}" in
     # Explicit per-component sync: never run destructive rsync --delete on the root ~/.config/quickshell
     install_dir__sync dots/.config/quickshell/ii "$XDG_CONFIG_HOME"/quickshell/ii
     install_file dots/.config/quickshell/ui-switch.sh "$XDG_CONFIG_HOME"/quickshell/ui-switch.sh
+    install_file dots/.config/quickshell/ui-switch.sh "$XDG_BIN_HOME"/ui-switch.sh
     if [[ "${INSTALL_CAELESTIA_HYBRID:-true}" == "true" ]]; then
       install_dir__sync dots/.config/quickshell/caelestia-hybrid "$XDG_CONFIG_HOME"/quickshell/caelestia-hybrid
       # Preserve hardware-specific ~/.config/caelestia/monitors/* by only managing shell.json

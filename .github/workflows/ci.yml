@@ -1,0 +1,57 @@
+name: CI — Hybrid Rice Test Suite & Static Analysis
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  static-checks:
+    name: Static Syntax & Portability Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Shell Syntax Validation (bash -n)
+        run: |
+          find . -name "*.sh" -not -path "./.git/*" -exec bash -n {} +
+          bash -n setup
+          echo "All shell scripts passed syntax validation."
+
+      - name: Check Portability (Zero Hardcoded Host Paths)
+        run: |
+          if grep -RIn "greyrat" dots/ sdata/ setup >/dev/null 2>&1; then
+            echo "::error::Hardcoded user path 'greyrat' found in tracked files!"
+            grep -RIn "greyrat" dots/ sdata/ setup
+            exit 1
+          fi
+          echo "Portability check passed: zero hardcoded user paths."
+
+  test-suite:
+    name: Automated Regression Test Suite (Sandboxed)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Test Prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq rsync jq
+
+      - name: Run Sandboxed Test Suite
+        run: |
+          chmod +x ./tests/run-tests.sh
+          ./tests/run-tests.sh

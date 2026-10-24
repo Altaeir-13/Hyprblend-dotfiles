@@ -6,11 +6,14 @@
 [![Hyprland](https://img.shields.io/badge/Compositor-Hyprland-00c8ff?logo=wayland&logoColor=white)](https://hyprland.org)
 [![Quickshell](https://img.shields.io/badge/Shell-Quickshell_Qt6-41CD52?logo=qt&logoColor=white)](https://quickshell.outfoxxed.me)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](./LICENSE)
-[![Status: v0.1.0--beta](https://img.shields.io/badge/Release-v0.1.0--beta-green.svg)](#)
+[![Status: v0.1.0-beta candidate](https://img.shields.io/badge/PR_%231-v0.1.0--beta_candidate-blue.svg)](https://github.com/Altaeir-13/dots-hyprland/pull/1)
 
 ---
 
 ## Visão Geral
+
+> [!NOTE]
+> **Status de Desenvolvimento:** A versão **`v0.1.0-beta`** é atualmente uma **candidata a release** e reside na branch de desenvolvimento [`feature/hybrid-rice-installer`](https://github.com/Altaeir-13/dots-hyprland/tree/feature/hybrid-rice-installer), sob revisão ativa no [Pull Request Draft #1](https://github.com/Altaeir-13/dots-hyprland/pull/1). Após a homologação final e merge, ela se tornará a release oficial na branch `main`.
 
 O **Hyprland Hybrid Rice** une o melhor de dois ecossistemas visuais líderes para Hyprland em um ambiente único e coeso:
 - **end-4 (illogical-impulse):** Rica central de controle (`StatusCenter`), widgets funcionais, extração dinâmica de cores Material You e ampla compatibilidade.
@@ -78,10 +81,13 @@ A alternância entre as duas interfaces ocorre em **tempo de execução com um �
 ## Procedimento de Instalação
 
 ### 1. Clonar o Repositório
+Enquanto o [Pull Request #1](https://github.com/Altaeir-13/dots-hyprland/pull/1) estiver em revisão, clone explicitamente a branch `feature/hybrid-rice-installer`:
+
 ```bash
-git clone --recursive https://github.com/SEU_USUARIO/dots-hyprland.git ~/dots-hyprland
+git clone --recursive -b feature/hybrid-rice-installer https://github.com/Altaeir-13/dots-hyprland.git ~/dots-hyprland
 cd ~/dots-hyprland
 ```
+*(Após o merge na branch `main`, o comando padrão `git clone --recursive https://github.com/Altaeir-13/dots-hyprland.git ~/dots-hyprland` passará a conter o rice híbrido diretamente).*
 
 ### 2. Simulação Não-Destrutiva (Recomendado)
 Antes de efetuar alterações, você pode testar a instalação sem modificar arquivos:
@@ -138,13 +144,14 @@ Caso o caminho de um submódulo Git (como `shapes`) já contenha arquivos preexi
 
 ### Alternando entre Interfaces
 1. **Via Barra Gráfica:** Clique no ícone de alternância localizado na barra superior do desktop.
-2. **Via Terminal / Atalho:**
+2. **Via Terminal ou Atalho (`Super + Tab`):**
    ```bash
-   # Ativar Caelestia Shell
-   ui-switch.sh caelestia
+   # Execução direta pelo comando no PATH (~/.local/bin/ui-switch.sh):
+   ui-switch.sh caelestia   # Ativar Caelestia Shell
+   ui-switch.sh end4        # Ativar end-4 (illogical-impulse)
 
-   # Ativar end-4 (illogical-impulse)
-   ui-switch.sh end4
+   # Ou pelo caminho de instalação do Quickshell:
+   ~/.config/quickshell/ui-switch.sh caelestia
    ```
 
 ### Bloqueio de Tela
@@ -167,21 +174,35 @@ git pull
 ## Backups e Recuperação Manual
 
 ### Backups Automáticos
-Antes de sobrescrever arquivos conflitantes durante a instalação, o instalador cria automaticamente uma cópia de segurança em:
-```
-~/.config/hyprland-rice-backup-AAAA-MM-DD-HHMMSS/
-```
+- **Backup de Conflitos Globais:** Antes de sobrescrever qualquer arquivo ou diretório conflitante, o instalador gera automaticamente um snapshot completo em:
+  ```
+  ~/ii-original-dots-backup/
+  ```
+  *(Em reexecuções sucessivas ou se a pasta já existir, são criados diretórios timestampados com formato `~/ii-original-dots-backup-AAAAMMDD-HHMMSS/`).*
+- **Proteção em Sincronizações com `rsync --delete`:** Diretórios gerenciados (`quickshell/ii`, `quickshell/caelestia-hybrid` e `hypr/hyprland`) utilizam sincronização com deleção para manter paridade exata com o repositório. Arquivos não gerenciados ou adicionados manualmente pelo usuário dentro dessas pastas são **automaticamente movidos para o diretório de backup** (`~/ii-original-dots-backup-*/sync-deleted/<componente>/`) antes da sincronização, nunca sendo excluídos silenciosamente.
+- **Customizações Permanentes:** Para configurações próprias que **nunca** devem ser modificadas ou sincronizadas pelo instalador, utilize a pasta dedicada:
+  ```
+  ~/.config/hypr/custom/
+  ```
+  *(Arquivos como `monitors.lua`, `workspaces.lua` e `general.lua` são sincronizados com `--ignore-existing` e permanecem 100% sob controle do usuário).*
 
 ### Recuperação Manual
-Caso uma transição trave ou uma configuração impeça o carregamento da interface gráfica:
-1. Abra um terminal virtual via `Ctrl + Alt + F3` ou conecte via SSH.
-2. Force a restauração para o frontend end-4 base:
+Caso uma transição trave ou uma customização impeça o carregamento da interface gráfica:
+1. Abra um terminal virtual via `Ctrl + Alt + F3` (ou conecte-se via SSH).
+2. Force a restauração para o frontend base end-4:
    ```bash
    killall -9 quickshell qs mpvpaper 2>/dev/null
    echo "end4" > ~/.local/state/quickshell/ui-switch/current
    qs -c ii &
    ```
-3. Se necessário, restaure suas configurações anteriores copiando os arquivos de volta do diretório de backup correspondente.
+3. Para restaurar um arquivo específico do backup gerado:
+   ```bash
+   cp -r ~/ii-original-dots-backup/.config/<arquivo-desejado> ~/.config/
+   ```
+4. Para consultar o log da última instalação e verificar passos executados:
+   ```bash
+   cat ~/.local/state/illogical-impulse/logs/install-*.log | tail -n 50
+   ```
 
 ---
 

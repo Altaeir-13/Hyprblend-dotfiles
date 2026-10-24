@@ -17,7 +17,9 @@ function auto_backup_configs(){
   local backup=false
   local effective_backup_dir="$BACKUP_DIR"
   case $ask in
-    false) if [[ ! -d "$BACKUP_DIR" ]] || [[ -z "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]]; then local backup=true;fi;;
+    false)
+      local backup=true
+      ;;
     *)
       printf "${STY_RED}"
       printf "Would you like to backup clashing dirs/files to \"$BACKUP_DIR\"?\n"
@@ -40,6 +42,7 @@ function auto_backup_configs(){
     if [[ -d "$effective_backup_dir" ]]; then
       effective_backup_dir="${BACKUP_DIR}-$(date +%Y%m%d-%H%M%S)"
     fi
+    export ACTIVE_BACKUP_DIR="$effective_backup_dir"
     backup_clashing_targets dots/.config $XDG_CONFIG_HOME "${effective_backup_dir}/.config"
     backup_clashing_targets dots/.local/share $XDG_DATA_HOME "${effective_backup_dir}/.local/share"
     backup_clashing_targets dots/.local/bin $XDG_BIN_HOME "${effective_backup_dir}/.local/bin"
@@ -108,14 +111,32 @@ rsync_dir__sync(){
   # `--delete' for rsync to make sure that
   # original dotfiles and new ones in the SAME DIRECTORY
   # (eg. in ~/.config/hypr/hyprland) won't be mixed together
+  local src="$1"
+  local dest_dir="$2"
   if [[ "${DRY_RUN:-false}" == "true" ]]; then
-    echo -e "${STY_YELLOW}[DRY-RUN] rsync_dir__sync: $1/ -> $2/${STY_RST}"
+    echo -e "${STY_YELLOW}[DRY-RUN] rsync_dir__sync: $src/ -> $dest_dir/${STY_RST}"
     return 0
   fi
-  x mkdir -p "$2"
-  local dest="$(realpath -se "$2")"
+  x mkdir -p "$dest_dir"
+  local dest="$(realpath -se "$dest_dir")"
   x mkdir -p "$(dirname "${INSTALLED_LISTFILE}")"
-  x _run_rsync_and_record "$dest" -a --delete "$1"/ "$2"/
+
+  local backup_dest_root="${ACTIVE_BACKUP_DIR:-${BACKUP_DIR}}"
+  if [[ ! -d "$backup_dest_root" ]]; then
+    backup_dest_root="${BACKUP_DIR}-sync-backup-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$backup_dest_root"
+  fi
+  local component_name="$(basename "$dest_dir")"
+  local sync_backup_dir="${backup_dest_root}/sync-deleted/${component_name}"
+  mkdir -p "$sync_backup_dir"
+
+  x _run_rsync_and_record "$dest" -a --delete --backup --backup-dir="$sync_backup_dir" "$src"/ "$dest_dir"/
+
+  if [[ -d "$sync_backup_dir" && -n "$(ls -A "$sync_backup_dir" 2>/dev/null)" ]]; then
+    echo -e "${STY_YELLOW}[$0]: NOTICE: Unmanaged/modified files in '$dest_dir' were safely backed up to '${sync_backup_dir}' before synchronization.${STY_RST}"
+  else
+    rmdir "$sync_backup_dir" 2>/dev/null || true
+  fi
 }
 rsync_dir__sync_exclude(){
   # NOTE: This function is only for using in other functions
@@ -135,7 +156,23 @@ rsync_dir__sync_exclude(){
   x mkdir -p "$dest_dir"
   local dest="$(realpath -se "$dest_dir")"
   x mkdir -p "$(dirname "${INSTALLED_LISTFILE}")"
-  x _run_rsync_and_record "$dest" -a --delete "${excludes[@]}" "$src"/ "$dest_dir"/
+
+  local backup_dest_root="${ACTIVE_BACKUP_DIR:-${BACKUP_DIR}}"
+  if [[ ! -d "$backup_dest_root" ]]; then
+    backup_dest_root="${BACKUP_DIR}-sync-backup-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$backup_dest_root"
+  fi
+  local component_name="$(basename "$dest_dir")"
+  local sync_backup_dir="${backup_dest_root}/sync-deleted/${component_name}"
+  mkdir -p "$sync_backup_dir"
+
+  x _run_rsync_and_record "$dest" -a --delete --backup --backup-dir="$sync_backup_dir" "${excludes[@]}" "$src"/ "$dest_dir"/
+
+  if [[ -d "$sync_backup_dir" && -n "$(ls -A "$sync_backup_dir" 2>/dev/null)" ]]; then
+    echo -e "${STY_YELLOW}[$0]: NOTICE: Unmanaged/modified files in '$dest_dir' were backed up to '${sync_backup_dir}' before synchronization.${STY_RST}"
+  else
+    rmdir "$sync_backup_dir" 2>/dev/null || true
+  fi
 }
 function install_file(){
   # NOTE: Do not add prefix `v` or `x` when using this function
