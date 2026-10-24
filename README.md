@@ -6,14 +6,14 @@
 [![Hyprland](https://img.shields.io/badge/Compositor-Hyprland-00c8ff?logo=wayland&logoColor=white)](https://hyprland.org)
 [![Quickshell](https://img.shields.io/badge/Shell-Quickshell_Qt6-41CD52?logo=qt&logoColor=white)](https://quickshell.outfoxxed.me)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](./LICENSE)
-[![Status: v0.1.0-beta candidate](https://img.shields.io/badge/PR_%231-v0.1.0--beta_candidate-blue.svg)](https://github.com/Altaeir-13/dots-hyprland/pull/1)
+[![Release: v0.1.0-beta](https://img.shields.io/badge/Release-v0.1.0--beta-green.svg)](https://github.com/Altaeir-13/dots-hyprland/releases/tag/v0.1.0-beta)
 
 ---
 
 ## Visão Geral
 
 > [!NOTE]
-> **Status de Desenvolvimento:** A versão **`v0.1.0-beta`** é atualmente uma **candidata a release** e reside na branch de desenvolvimento [`feature/hybrid-rice-installer`](https://github.com/Altaeir-13/dots-hyprland/tree/feature/hybrid-rice-installer), sob revisão ativa no [Pull Request Draft #1](https://github.com/Altaeir-13/dots-hyprland/pull/1). Após a homologação final e merge, ela se tornará a release oficial na branch `main`.
+> **Versão Oficial:** Esta é a versão **`v0.1.0-beta`** do Hyprland Hybrid Rice na branch `main`, integrando os frontends end-4 (illogical-impulse) e Caelestia Shell com testes de reprodução automatizados e instalador multiperfil para Arch Linux.
 
 O **Hyprland Hybrid Rice** une o melhor de dois ecossistemas visuais líderes para Hyprland em um ambiente único e coeso:
 - **end-4 (illogical-impulse):** Rica central de controle (`StatusCenter`), widgets funcionais, extração dinâmica de cores Material You e ampla compatibilidade.
@@ -81,13 +81,12 @@ A alternância entre as duas interfaces ocorre em **tempo de execução com um �
 ## Procedimento de Instalação
 
 ### 1. Clonar o Repositório
-Enquanto o [Pull Request #1](https://github.com/Altaeir-13/dots-hyprland/pull/1) estiver em revisão, clone explicitamente a branch `feature/hybrid-rice-installer`:
+Clone o repositório com todos os submódulos necessários a partir da branch principal (`main`):
 
 ```bash
-git clone --recursive -b feature/hybrid-rice-installer https://github.com/Altaeir-13/dots-hyprland.git ~/dots-hyprland
+git clone --recursive https://github.com/Altaeir-13/dots-hyprland.git ~/dots-hyprland
 cd ~/dots-hyprland
 ```
-*(Após o merge na branch `main`, o comando padrão `git clone --recursive https://github.com/Altaeir-13/dots-hyprland.git ~/dots-hyprland` passará a conter o rice híbrido diretamente).*
 
 ### 2. Simulação Não-Destrutiva (Recomendado)
 Antes de efetuar alterações, você pode testar a instalação sem modificar arquivos:
@@ -201,7 +200,7 @@ Caso uma transição trave ou uma customização impeça o carregamento da inter
    ```
 4. Para consultar o log da última instalação e verificar passos executados:
    ```bash
-   cat ~/.local/state/illogical-impulse/logs/install-*.log | tail -n 50
+   cat ~/.local/state/illogical-impulse/logs/setup-*.log | tail -n 50
    ```
 
 ---
