@@ -23,19 +23,18 @@
 # Configuration file
 CONFIG_FILE="sdata/subcmd-install/3.files-exp.yaml"
 
+EXP_PREF_SHELL="$(yq -r '.user_preferences.shell // "fish"' "$CONFIG_FILE")"
+EXP_PREF_TERMINAL="$(yq -r '.user_preferences.terminal // "foot"' "$CONFIG_FILE")"
+EXP_PREF_KEYBINDINGS="$(yq -r '.user_preferences.keybindings // "default"' "$CONFIG_FILE")"
+
 # =============================================================================
 wizard_update_preferences() {
-  echo -e "${STY_CYAN}=== Dotfiles Customization ===${STY_RESET}"
-
-    # Get current preferences
-    current_shell=$(yq '.user_preferences.shell // "fish"' "$CONFIG_FILE")
-    current_terminal=$(yq '.user_preferences.terminal // "kitty"' "$CONFIG_FILE")
-    current_keybindings=$(yq '.user_preferences.keybindings // "default"' "$CONFIG_FILE")
+  echo -e "${STY_CYAN}=== Dotfiles Customization ===${STY_RST}"
 
     echo "Current preferences:"
-    echo "  Shell: $current_shell"
-    echo "  Terminal: $current_terminal"
-    echo "  Keybindings: $current_keybindings"
+    echo "  Shell: $EXP_PREF_SHELL"
+    echo "  Terminal: $EXP_PREF_TERMINAL"
+    echo "  Keybindings: $EXP_PREF_KEYBINDINGS"
     echo
 
     # Shell selection
@@ -45,9 +44,9 @@ wizard_update_preferences() {
     read -p "Enter choice [1-2]: " shell_choice
 
     case "$shell_choice" in
-      1|"") shell="fish" ;;
-      2) shell="zsh" ;;
-      *) echo "Invalid choice, using fish"; shell="fish" ;;
+      1|"") EXP_PREF_SHELL="fish" ;;
+      2) EXP_PREF_SHELL="zsh" ;;
+      *) echo "Invalid choice, using fish"; EXP_PREF_SHELL="fish" ;;
     esac
 
     # Terminal selection
@@ -58,9 +57,9 @@ wizard_update_preferences() {
     read -p "Enter choice [1-2]: " terminal_choice
 
     case "$terminal_choice" in
-      1|"") terminal="kitty" ;;
-      2) terminal="foot" ;;
-      *) echo "Invalid choice, using kitty"; terminal="kitty" ;;
+      1|"") EXP_PREF_TERMINAL="kitty" ;;
+      2) EXP_PREF_TERMINAL="foot" ;;
+      *) echo "Invalid choice, using kitty"; EXP_PREF_TERMINAL="kitty" ;;
     esac
 
     # Keybindings selection
@@ -71,15 +70,10 @@ wizard_update_preferences() {
     read -p "Enter choice [1-2]: " keybind_choice
 
     case "$keybind_choice" in
-      1|"") keybindings="default" ;;
-      2) keybindings="vim" ;;
-      *) echo "Invalid choice, using default"; keybindings="default" ;;
+      1|"") EXP_PREF_KEYBINDINGS="default" ;;
+      2) EXP_PREF_KEYBINDINGS="vim" ;;
+      *) echo "Invalid choice, using default"; EXP_PREF_KEYBINDINGS="default" ;;
     esac
-
-    # Update YAML in-place
-    yq -i ".user_preferences.shell = \"$shell\"" "$CONFIG_FILE"
-    yq -i ".user_preferences.terminal = \"$terminal\"" "$CONFIG_FILE"
-    yq -i ".user_preferences.keybindings = \"$keybindings\"" "$CONFIG_FILE"
 
     echo
     echo "Preferences updated!"
@@ -87,26 +81,59 @@ wizard_update_preferences() {
 
 # Get user preference
 get_pref() {
-  yq -r ".user_preferences.$1" "$CONFIG_FILE"
+  case "$1" in
+    shell) printf '%s\n' "$EXP_PREF_SHELL" ;;
+    terminal) printf '%s\n' "$EXP_PREF_TERMINAL" ;;
+    keybindings) printf '%s\n' "$EXP_PREF_KEYBINDINGS" ;;
+    *) yq -r ".user_preferences.$1" "$CONFIG_FILE" ;;
+  esac
 }
 
-# Check if pattern should be processed based on user preferences
+# Check if pattern should be processed based on CLI skip flags and user preferences
 should_process_pattern() {
   local pattern="$1"
+  local pat_from="$2"
+
+  # Respect CLI --skip-* flags for parity with 3.files-legacy.sh
+  case "$pat_from" in
+    dots/.config/quickshell/*|dots/.config/caelestia/*)
+      [[ "${SKIP_QUICKSHELL:-false}" == "true" ]] && return 1
+      ;;
+    dots/.config/hypr/hyprland.lua)
+      [[ "${SKIP_HYPRLAND:-false}" == "true" || "${SKIP_HYPRLAND_ENTRY:-false}" == "true" ]] && return 1
+      ;;
+    dots/.config/hypr/*)
+      [[ "${SKIP_HYPRLAND:-false}" == "true" ]] && return 1
+      ;;
+    dots/.config/fish|dots/.config/fish/*)
+      [[ "${SKIP_FISH:-false}" == "true" ]] && return 1
+      ;;
+    dots/.config/fontconfig|dots-extra/fontsets/*)
+      [[ "${SKIP_FONTCONFIG:-false}" == "true" ]] && return 1
+      ;;
+    dots/.config/*|dots/.local/share/konsole)
+      [[ "${SKIP_MISCCONF:-false}" == "true" ]] && return 1
+      ;;
+  esac
+
   local condition=$(echo "$pattern" | yq '.condition // "true"')
 
-    # If no condition or condition is "true", always process
-    if [[ "$condition" == "true" ]]; then
-      return 0
-    fi
+  # If no condition or condition is "true", always process
+  if [[ "$condition" == "true" ]]; then
+    return 0
+  fi
 
-    # Extract the preference type and value from condition
-    local type=$(echo "$condition" | yq '.type')
-    local value=$(echo "$condition" | yq '.value')
+  # Extract the preference type and value from condition
+  local type=$(echo "$condition" | yq -r '.type')
+  local value=$(echo "$condition" | yq -r '.value')
 
-    [[ "$(get_pref "$type")" == "$value" ]]
+  if [[ "$type" == "profile_caelestia" ]]; then
+    [[ "${INSTALL_CAELESTIA_HYBRID:-true}" == "$value" ]]
+    return $?
+  fi
 
-  }
+  [[ "$(get_pref "$type")" == "$value" ]]
+}
 
 # Compare hashes of files/directories, return true if they are the same, false otherwise
 files_are_same() {
@@ -163,9 +190,9 @@ readarray patterns < <(yq -o=j -I=0 '.patterns[]' "$CONFIG_FILE")
 
 # Process each pattern
 for pattern in "${patterns[@]}"; do
-  from=$(echo "$pattern" | yq '.from' - | envsubst)
-  to=$(echo "$pattern" | yq '.to' - | envsubst)
-  mode=$(echo "$pattern" | yq '.mode' - | envsubst)
+  from=$(echo "$pattern" | yq -r '.from' - | envsubst)
+  to=$(echo "$pattern" | yq -r '.to' - | envsubst)
+  mode=$(echo "$pattern" | yq -r '.mode' - | envsubst)
   condition=$(echo "$pattern" | yq '.condition // "true"')
 
   # Handle fontconfig fontset override
@@ -175,8 +202,13 @@ for pattern in "${patterns[@]}"; do
     echo "Using fontset \"${FONTSET_DIR_NAME}\" for fontconfig"
   fi
 
+  # Handle --via-nix override for hypridle.conf
+  if [[ "$from" == "dots/.config/hypr/hypridle.conf" ]] && [[ "${INSTALL_VIA_NIX:-false}" == "true" ]]; then
+    from="dots-extra/via-nix/hypridle.conf"
+  fi
+
   # Check if pattern should be processed
-  if ! should_process_pattern "$pattern"; then
+  if ! should_process_pattern "$pattern" "$from"; then
     # Format condition message nicely
     if [[ "$condition" != "true" ]]; then
       cond_type=$(echo "$condition" | yq -r '.type // ""')
@@ -194,11 +226,11 @@ for pattern in "${patterns[@]}"; do
 
   echo "Processing: $from -> $to (mode: $mode)"
 
-  # Build exclude arguments for rsync
-  excludes=()
+  # Build exclude patterns for rsync
+  exclude_patterns=()
   if echo "$pattern" | yq -e '.excludes' >/dev/null 2>&1; then
     while IFS= read -r exclude; do
-      excludes+=(--exclude "$exclude")
+      exclude_patterns+=("$exclude")
     done < <(echo "$pattern" | yq -r '.excludes[]')
   fi
 
@@ -208,34 +240,25 @@ for pattern in "${patterns[@]}"; do
     continue
   fi
 
-  # Ensure destination directory exists for files
-  if [[ -f "$from" ]]; then
-    v mkdir -p "$(dirname "$to")"
-  fi
-
-  # Execute based on mode
+  # Execute based on mode using the audited helpers from 3.files.sh
   case "$mode" in
     "sync")
       if [[ -d "$from" ]]; then
-        warning_overwrite
-        v rsync -av --delete "${excludes[@]}" "$from/" "$to/"
+        if (( ${#exclude_patterns[@]} > 0 )); then
+          install_dir__sync_exclude "$from" "$to" "${exclude_patterns[@]}"
+        else
+          install_dir__sync "$from" "$to"
+        fi
       else
-        warning_overwrite
-        # For files, don't use trailing slash and don't use --delete
-        v rsync -av "${excludes[@]}" "$from" "$to"
+        install_file "$from" "$to"
       fi
       ;;
-    "soft")
-      warning_overwrite
+    "soft"|"hard")
       if [[ -d "$from" ]]; then
-        v rsync -av "${excludes[@]}" "$from/" "$to/"
+        install_dir "$from" "$to"
       else
-        # For files, don't use trailing slash
-        v rsync -av "${excludes[@]}" "$from" "$to"
+        install_file "$from" "$to"
       fi
-      ;;
-    "hard")
-      v cp -r "$from" "$to"
       ;;
     "hard-backup")
       if [[ -e "$to" ]]; then
@@ -244,31 +267,37 @@ for pattern in "${patterns[@]}"; do
         else
           backup_number=$(get_next_backup_number "$to")
           v mv "$to" "$to.old.$backup_number"
-          v cp -r "$from" "$to"
+          if [[ -d "$from" ]]; then
+            install_dir "$from" "$to"
+          else
+            install_file "$from" "$to"
+          fi
         fi
       else
-        v cp -r "$from" "$to"
+        if [[ -d "$from" ]]; then
+          install_dir "$from" "$to"
+        else
+          install_file "$from" "$to"
+        fi
       fi
       ;;
     "soft-backup")
-      if [[ -e "$to" ]]; then
-        if files_are_same "$from" "$to"; then
-          echo "Files are identical, skipping backup"
-        else
-          v cp -r "$from" "$to.new"
-        fi
+      if [[ -d "$from" ]]; then
+        install_dir "$from" "$to"
       else
-        v cp -r "$from" "$to"
+        install_file__auto_backup "$from" "$to"
       fi
       ;;
     "skip")
       echo "Skipping $from"
       ;;
     "skip-if-exists")
-      if [[ -e "$to" ]]; then
+      if [[ -d "$from" ]]; then
+        install_dir__ignore_existing "$from" "$to"
+      elif [[ -e "$to" ]]; then
         echo "Skipping $from (destination exists)"
       else
-        v cp -r "$from" "$to"
+        install_file "$from" "$to"
       fi
       ;;
     *)
@@ -276,3 +305,8 @@ for pattern in "${patterns[@]}"; do
       ;;
   esac
 done
+
+if [[ "${SKIP_HYPRLAND:-false}" != "true" ]] && [[ -f "${XDG_CONFIG_HOME}/hypr/hyprland.conf" ]]; then
+  v mv "${XDG_CONFIG_HOME}/hypr/hyprland.conf" "${XDG_CONFIG_HOME}/hypr/hyprland.conf.old"
+  echo 'hyprland.conf has been renamed to hyprland.conf.old. This is to allow the new lua config to load.'
+fi

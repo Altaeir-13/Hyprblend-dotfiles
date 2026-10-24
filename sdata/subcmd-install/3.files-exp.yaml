@@ -16,6 +16,24 @@ patterns:
   - from: "dots/.config/quickshell/ii"
     to: "$XDG_CONFIG_HOME/quickshell/ii"
     mode: "sync"
+  - from: "dots/.config/quickshell/caelestia-hybrid"
+    to: "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid"
+    mode: "sync"
+    condition:
+      type: "profile_caelestia"
+      value: "true"
+  - from: "dots/.config/quickshell/ui-switch.sh"
+    to: "$XDG_CONFIG_HOME/quickshell/ui-switch.sh"
+    mode: "hard"
+  - from: "dots/.config/caelestia/shell.json"
+    to: "$XDG_CONFIG_HOME/caelestia/shell.json"
+    mode: "soft-backup"
+    condition:
+      type: "profile_caelestia"
+      value: "true"
+  - from: "dots/.local/bin/rice-lock"
+    to: "$XDG_BIN_HOME/rice-lock"
+    mode: "hard"
   # Conditionally install these files
   - from: "dots/.config/fish"
     to: "$XDG_CONFIG_HOME/fish"
@@ -42,11 +60,16 @@ patterns:
     condition:
       type: "terminal"
       value: "kitty"
-  # Hyprland    
-  - from: "dots/.config/hypr"
-    to: "$XDG_CONFIG_HOME/hypr"
+  # Hyprland managed subdirectories & entry (never sync root ~/.config/hypr with --delete)
+  - from: "dots/.config/hypr/hyprland"
+    to: "$XDG_CONFIG_HOME/hypr/hyprland"
     mode: "sync"
-    excludes: ["custom", "hyprlock.conf", "hypridle.conf"]
+  - from: "dots/.config/hypr/hyprlock"
+    to: "$XDG_CONFIG_HOME/hypr/hyprlock"
+    mode: "sync"
+  - from: "dots/.config/hypr/hyprland.lua"
+    to: "$XDG_CONFIG_HOME/hypr/hyprland.lua"
+    mode: "hard"
   # Hyprland special files
   - from: "dots/.config/hypr/hypridle.conf"
     to: "$XDG_CONFIG_HOME/hypr/hypridle.conf"

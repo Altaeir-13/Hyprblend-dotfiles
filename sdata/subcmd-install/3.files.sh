@@ -10,9 +10,14 @@ function warning_overwrite(){
   printf "${STY_RST}"
 }
 function auto_backup_configs(){
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Would check/backup clashing configs to \"${BACKUP_DIR}\"${STY_RST}"
+    return 0
+  fi
   local backup=false
+  local effective_backup_dir="$BACKUP_DIR"
   case $ask in
-    false) if [[ ! -d "$BACKUP_DIR" ]]; then local backup=true;fi;;
+    false) if [[ ! -d "$BACKUP_DIR" ]] || [[ -z "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]]; then local backup=true;fi;;
     *)
       printf "${STY_RED}"
       printf "Would you like to backup clashing dirs/files to \"$BACKUP_DIR\"?\n"
@@ -32,47 +37,85 @@ function auto_backup_configs(){
       ;;
   esac
   if $backup;then
-    backup_clashing_targets dots/.config $XDG_CONFIG_HOME "${BACKUP_DIR}/.config"
-    backup_clashing_targets dots/.local/share $XDG_DATA_HOME "${BACKUP_DIR}/.local/share"
-    printf "${STY_BLUE}Backup into \"${BACKUP_DIR}\" finished.${STY_RST}\n"
+    if [[ -d "$effective_backup_dir" ]]; then
+      effective_backup_dir="${BACKUP_DIR}-$(date +%Y%m%d-%H%M%S)"
+    fi
+    backup_clashing_targets dots/.config $XDG_CONFIG_HOME "${effective_backup_dir}/.config"
+    backup_clashing_targets dots/.local/share $XDG_DATA_HOME "${effective_backup_dir}/.local/share"
+    backup_clashing_targets dots/.local/bin $XDG_BIN_HOME "${effective_backup_dir}/.local/bin"
+    printf "${STY_BLUE}Backup into \"${effective_backup_dir}\" finished.${STY_RST}\n"
   fi
 }
 function gen_firstrun(){
-  x mkdir -p "$(dirname ${FIRSTRUN_FILE})"
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Would generate firstrun marker: ${FIRSTRUN_FILE}${STY_RST}"
+    return 0
+  fi
+  x mkdir -p "$(dirname "${FIRSTRUN_FILE}")"
   x touch "${FIRSTRUN_FILE}"
-  x mkdir -p "$(dirname ${INSTALLED_LISTFILE})"
+  x mkdir -p "$(dirname "${INSTALLED_LISTFILE}")"
   realpath -se "${FIRSTRUN_FILE}" >> "${INSTALLED_LISTFILE}"
+}
+_run_rsync_and_record(){
+  local dest="$1"
+  shift
+  local tmp_out
+  tmp_out="$(mktemp)"
+  if ! rsync --out-format='%i %n' "$@" > "$tmp_out"; then
+    rm -f "$tmp_out"
+    return 1
+  fi
+  touch "${INSTALLED_LISTFILE}"
+  awk -v d="$dest" '$1 ~ /^>/{ sub(/^[^ ]+ /,""); printf d "/" $0 "\n" }' "$tmp_out" >> "${INSTALLED_LISTFILE}"
+  rm -f "$tmp_out"
+  return 0
 }
 cp_file(){
   # NOTE: This function is only for using in other functions
-  x mkdir -p "$(dirname $2)"
-  x cp -f "$1" "$2"
-  x mkdir -p "$(dirname ${INSTALLED_LISTFILE})"
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] cp_file: $1 -> $2${STY_RST}"
+    return 0
+  fi
+  x mkdir -p "$(dirname "$2")"
+  x cp -pf "$1" "$2"
+  x mkdir -p "$(dirname "${INSTALLED_LISTFILE}")"
   realpath -se "$2" >> "${INSTALLED_LISTFILE}"
 }
 rsync_dir(){
   # NOTE: This function is only for using in other functions
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] rsync_dir: $1/ -> $2/${STY_RST}"
+    return 0
+  fi
   x mkdir -p "$2"
-  local dest="$(realpath -se $2)"
-  x mkdir -p "$(dirname ${INSTALLED_LISTFILE})"
-  rsync -a --out-format='%i %n' "$1"/ "$2"/ | awk -v d="$dest" '$1 ~ /^>/{ sub(/^[^ ]+ /,""); printf d "/" $0 "\n" }' >> "${INSTALLED_LISTFILE}"
+  local dest="$(realpath -se "$2")"
+  x mkdir -p "$(dirname "${INSTALLED_LISTFILE}")"
+  x _run_rsync_and_record "$dest" -a "$1"/ "$2"/
 }
 rsync_dir__ignore_existing(){
   # NOTE: This function is only for using in other functions
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] rsync_dir__ignore_existing: $1/ -> $2/${STY_RST}"
+    return 0
+  fi
   x mkdir -p "$2"
-  local dest="$(realpath -se $2)"
-  x mkdir -p "$(dirname ${INSTALLED_LISTFILE})"
-  rsync -a --ignore-existing --out-format='%i %n' "$1"/ "$2"/ | awk -v d="$dest" '$1 ~ /^>/{ sub(/^[^ ]+ /,""); printf d "/" $0 "\n" }' >> "${INSTALLED_LISTFILE}"
+  local dest="$(realpath -se "$2")"
+  x mkdir -p "$(dirname "${INSTALLED_LISTFILE}")"
+  x _run_rsync_and_record "$dest" -a --ignore-existing "$1"/ "$2"/
 }
 rsync_dir__sync(){
   # NOTE: This function is only for using in other functions
   # `--delete' for rsync to make sure that
   # original dotfiles and new ones in the SAME DIRECTORY
-  # (eg. in ~/.config/hypr) won't be mixed together
+  # (eg. in ~/.config/hypr/hyprland) won't be mixed together
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] rsync_dir__sync: $1/ -> $2/${STY_RST}"
+    return 0
+  fi
   x mkdir -p "$2"
-  local dest="$(realpath -se $2)"
-  x mkdir -p "$(dirname ${INSTALLED_LISTFILE})"
-  rsync -a --delete --out-format='%i %n' "$1"/ "$2"/ | awk -v d="$dest" '$1 ~ /^>/{ sub(/^[^ ]+ /,""); printf d "/" $0 "\n" }' >> "${INSTALLED_LISTFILE}"
+  local dest="$(realpath -se "$2")"
+  x mkdir -p "$(dirname "${INSTALLED_LISTFILE}")"
+  x _run_rsync_and_record "$dest" -a --delete "$1"/ "$2"/
 }
 rsync_dir__sync_exclude(){
   # NOTE: This function is only for using in other functions
@@ -85,10 +128,14 @@ rsync_dir__sync_exclude(){
   for pattern in "$@"; do
     excludes+=(--exclude "$pattern")
   done
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] rsync_dir__sync_exclude (${excludes[*]}): $src/ -> $dest_dir/${STY_RST}"
+    return 0
+  fi
   x mkdir -p "$dest_dir"
-  local dest="$(realpath -se $dest_dir)"
-  x mkdir -p "$(dirname ${INSTALLED_LISTFILE})"
-  rsync -a --delete "${excludes[@]}" --out-format='%i %n' "$src"/ "$dest_dir"/ | awk -v d="$dest" '$1 ~ /^>/{ sub(/^[^ ]+ /,""); printf d "/" $0 "\n" }' >> "${INSTALLED_LISTFILE}"
+  local dest="$(realpath -se "$dest_dir")"
+  x mkdir -p "$(dirname "${INSTALLED_LISTFILE}")"
+  x _run_rsync_and_record "$dest" -a --delete "${excludes[@]}" "$src"/ "$dest_dir"/
 }
 function install_file(){
   # NOTE: Do not add prefix `v` or `x` when using this function
@@ -151,12 +198,7 @@ function install_dir__ignore_existing(){
   # NOTE: Do not add prefix `v` or `x` when using this function
   local s=$1
   local t=$2
-  if [ -d $t ];then
-    echo -e "${STY_BLUE}[$0]: \"$t\" already exists, will not do anything.${STY_RST}"
-  else
-    echo -e "${STY_YELLOW}[$0]: \"$t\" does not exist yet.${STY_RST}"
-    v rsync_dir__ignore_existing $s $t
-  fi
+  v rsync_dir__ignore_existing $s $t
 }
 function install_dir__sync_exclude(){
   # NOTE: Do not add prefix `v` or `x` when using this function
@@ -177,6 +219,10 @@ function install_google_sans_flex(){
   local src_dir="$REPO_ROOT/cache/$src_name"
   local target_dir="${XDG_DATA_HOME}/fonts/illogical-impulse-$src_name"
   if fc-list | grep -qi "$font_name"; then return; fi
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Would clone and install font ${font_name} to ${target_dir}${STY_RST}"
+    return 0
+  fi
   x mkdir -p $src_dir
   x cd $src_dir
   try git init -b main
@@ -193,7 +239,7 @@ function install_google_sans_flex(){
 
 #####################################################################################
 # In case some dirs does not exists
-for i in "$XDG_BIN_HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"; do
+for i in "$XDG_BIN_HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"; do
   if ! test -e "$i"; then
     v mkdir -p "$i"
   fi
@@ -223,18 +269,27 @@ case "${EXPERIMENTAL_FILES_SCRIPT}" in
   *)source sdata/subcmd-install/3.files-legacy.sh;;
 esac
 
-if [[ ! "$OS_GROUP_ID" == "fedora" ]]; then
+if [[ ! "$OS_GROUP_ID" == "fedora" ]] && [[ "${SKIP_FONTCONFIG:-false}" != "true" ]]; then
   showfun install_google_sans_flex
   v install_google_sans_flex
 fi
 
 #####################################################################################
 
+if [[ "${DRY_RUN:-false}" != "true" ]]; then
+  mkdir -p "${XDG_STATE_HOME}/quickshell/ui-switch"
+  if [[ "${INSTALL_CAELESTIA_HYBRID:-true}" != "true" ]] || [[ ! -f "${XDG_STATE_HOME}/quickshell/ui-switch/current" ]]; then
+    printf 'end4\n' > "${XDG_STATE_HOME}/quickshell/ui-switch/current"
+  fi
+fi
+
 v gen_firstrun
 v dedup_and_sort_listfile "${INSTALLED_LISTFILE}" "${INSTALLED_LISTFILE}"
 
 # Prevent hyprland from not fully loaded
-sleep 1
+if [[ "${DRY_RUN:-false}" != "true" ]]; then
+  sleep 1
+fi
 try hyprctl reload
 
 #####################################################################################

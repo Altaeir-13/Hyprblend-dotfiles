@@ -2,14 +2,13 @@
 # It's not for directly running.
 
 install-yay(){
-  x sudo pacman -S --needed --noconfirm base-devel
+  x sudo pacman -S --needed --noconfirm base-devel git
+  x rm -rf /tmp/buildyay
   x git clone https://aur.archlinux.org/yay-bin.git /tmp/buildyay
   x cd /tmp/buildyay
-  x makepkg -o
-  x makepkg -se
-  x makepkg -i --noconfirm
+  x makepkg -si --noconfirm
   x cd ${REPO_ROOT}
-  rm -rf /tmp/buildyay
+  x rm -rf /tmp/buildyay
 }
 
 remove_deprecated_dependencies(){
@@ -24,6 +23,10 @@ remove_deprecated_dependencies(){
 # NOTE: `implicitize_old_dependencies()` was for the old days when we just switch from dependencies.conf to local PKGBUILDs.
 # However, let's just keep it as references for other distros writing their `sdata/dist-<OS_GROUP_ID>/install-deps.sh`, if they need it.
 implicitize_old_dependencies(){
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Would convert previously explicit dependencies to implicit.${STY_RST}"
+    return 0
+  fi
 # Convert old dependencies to non explicit dependencies so that they can be orphaned if not in meta packages
   remove_bashcomments_emptylines ./sdata/dist-arch/previous_dependencies.conf ./cache/old_deps_stripped.conf
   readarray -t old_deps_list < ./cache/old_deps_stripped.conf
@@ -55,7 +58,13 @@ v remove_deprecated_dependencies
 # Issue #363
 case $SKIP_SYSUPDATE in
   true) true;;
-  *) v sudo pacman -Syu;;
+  *)
+    if $ask; then
+      v sudo pacman -Syu
+    else
+      v sudo pacman -Syu --noconfirm
+    fi
+    ;;
 esac
 
 # Use yay. Because paru does not support cleanbuild.
@@ -78,29 +87,56 @@ install-local-pkgbuild() {
   x pushd $location
 
   source ./PKGBUILD
-  x yay -S --sudoloop $installflags --asdeps "${depends[@]}"
+  local -a all_deps=()
+  if [[ -n "${depends[*]:-}" ]]; then
+    all_deps+=("${depends[@]}")
+  fi
+  if [[ -n "${makedepends[*]:-}" ]]; then
+    all_deps+=("${makedepends[@]}")
+  fi
+  if (( ${#all_deps[@]} > 0 )); then
+    local -a yay_cmd=(yay -S --sudoloop)
+    if [[ "$installflags" == *"--noconfirm"* ]]; then
+      yay_cmd+=(--answerclean None --answerdiff None --answeredit None --answerupgrade None)
+    fi
+    x "${yay_cmd[@]}" $installflags --asdeps "${all_deps[@]}"
+  fi
   # man makepkg:
   # -A, --ignorearch: Ignore a missing or incomplete arch field in the build script.
   # -s, --syncdeps: Install missing dependencies using pacman. When build-time or run-time dependencies are not found, pacman will try to resolve them.
   # -f, --force: build a package even if it already exists in the PKGDEST
   # -i, --install: Install or upgrade the package after a successful build using pacman(8).
-  # In https://github.com/end-4/dots-hyprland/issues/823#issuecomment-3394774645 it's suggested to use `sudo pacman -U --noconfirm *.pkg.tar.zst` instead of `makepkg -i`, however it's possible that multiple *.pkg.tar.zst exist, which makes this command not reliable.
   x makepkg -Afsi --noconfirm
   x popd
 }
 
-# Install core dependencies from the meta-packages
-metapkgs=(./sdata/dist-arch/illogical-impulse-{audio,backlight,basic,fonts-themes,kde,portal,python,screencapture,toolkit,widgets})
-metapkgs+=(./sdata/dist-arch/illogical-impulse-hyprland)
-metapkgs+=(./sdata/dist-arch/illogical-impulse-microtex-git)
-metapkgs+=(./sdata/dist-arch/illogical-impulse-quickshell-git)
-metapkgs+=(./sdata/dist-arch/illogical-impulse-bibata-modern-classic-bin)
+# Install dependencies from the profile manifest (or fallback to default hybrid list)
+if [[ ${#ARCH_METAPKGS[@]} -gt 0 ]]; then
+  metapkgs=("${ARCH_METAPKGS[@]}")
+else
+  metapkgs=(./sdata/dist-arch/illogical-impulse-{audio,backlight,basic,fonts-themes,kde,portal,python,screencapture,toolkit,widgets})
+  metapkgs+=(./sdata/dist-arch/illogical-impulse-hyprland)
+  metapkgs+=(./sdata/dist-arch/illogical-impulse-microtex-git)
+  metapkgs+=(./sdata/dist-arch/illogical-impulse-quickshell-git)
+  metapkgs+=(./sdata/dist-arch/illogical-impulse-bibata-modern-classic-bin)
+  if [[ "${INSTALL_CAELESTIA_HYBRID:-true}" == "true" ]]; then
+    metapkgs+=(./sdata/dist-arch/illogical-impulse-caelestia-plugin)
+  fi
+fi
 
 for i in "${metapkgs[@]}"; do
+  if [[ "${INSTALL_CAELESTIA_HYBRID:-true}" != "true" ]] && [[ "$i" == *"caelestia-plugin"* ]]; then
+    continue
+  fi
   metainstallflags="--needed"
   $ask && showfun install-local-pkgbuild || metainstallflags="$metainstallflags --noconfirm"
   v install-local-pkgbuild "$i" "$metainstallflags"
 done
+
+if [[ ${#ARCH_EXTRA_PKGS[@]} -gt 0 ]]; then
+  printf "${STY_CYAN}[$0]: Installing profile extra packages (${INSTALL_PROFILE}): ${ARCH_EXTRA_PKGS[*]}${STY_RST}\n"
+  v sudo pacman -S --needed --noconfirm "${ARCH_EXTRA_PKGS[@]}"
+fi
 
 install-dinit-service-packages(){
   local -a pkgs=()

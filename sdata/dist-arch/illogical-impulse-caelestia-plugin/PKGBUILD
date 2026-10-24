@@ -1,0 +1,62 @@
+_commit='454f46da16ae75cc57f34adf48dea74db0fa5175'
+# Upstream repository:
+# https://github.com/caelestia-dots/shell
+
+groups=(illogical-impulse)
+_prefix='illogical-impulse'
+_pkgname=caelestia-plugin
+pkgname="$_prefix-$_pkgname"
+pkgver=2.5.0.r6.g454f46da
+pkgrel=1
+pkgdesc="Native Qt6/QML plugins (Caelestia.*) pinned commit for Hybrid Rice ($_prefix + Caelestia)"
+arch=(x86_64 aarch64)
+url='https://github.com/caelestia-dots/shell'
+options=(!strip)
+license=('GPL-3.0-only')
+depends=(
+  'aubio'
+  'ffmpeg'
+  'libcava'
+  'libpipewire'
+  'libqalculate'
+  'lm_sensors'
+  'mpvpaper'
+  'qt6-base'
+  'qt6-declarative'
+  'qt6-m3shapes-git'
+)
+makedepends=(
+  'cmake'
+  'git'
+  'ninja'
+  'pkgconf'
+  'qt6-shadertools'
+)
+provides=("$_pkgname" "caelestia-qml-plugin")
+conflicts=("$_pkgname" "caelestia-qml-plugin")
+
+_pkgsrc="caelestia-shell"
+source=("$_pkgsrc::git+$url.git#commit=$_commit")
+sha256sums=('SKIP')
+
+build() {
+  cd "$_pkgsrc"
+  cmake -GNinja -B build \
+    -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DVERSION="2.5.0" \
+    -DGIT_REVISION="$_commit" \
+    -DDISTRIBUTOR="dots-hyprland (hybrid-rice)" \
+    -DENABLE_MODULES="plugin" \
+    -DINSTALL_QMLDIR="lib/qt6/qml"
+
+  cmake --build build
+}
+
+package() {
+  cd "$_pkgsrc"
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 "build/qml/Caelestia/I18n/Tr.qml" -t "$pkgdir/usr/lib/qt6/qml/Caelestia/I18n"
+  install -Dm644 "build/qml/Caelestia/I18n/Units.qml" -t "$pkgdir/usr/lib/qt6/qml/Caelestia/I18n"
+  install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

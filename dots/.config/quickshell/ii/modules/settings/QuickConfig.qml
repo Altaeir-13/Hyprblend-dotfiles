@@ -1,4 +1,5 @@
 import QtQuick
+import QtMultimedia
 import QtQuick.Layouts
 import Qt5Compat.GraphicalEffects
 import Quickshell
@@ -70,9 +71,20 @@ ContentPage {
                 
                 StyledImage {
                     id: wallpaperPreview
+
+                    // HYBRID_VIDEO_WALLPAPER_PREVIEW
+                    property string selectedWallpaper:
+                        Config.options.background.wallpaperPath || ""
+
+                    property bool videoSelected:
+                        /\.(mp4|webm|mkv|avi|mov|m4v)$/i.test(
+                            selectedWallpaper
+                        )
                     anchors.fill: parent
                     fillMode: Image.PreserveAspectCrop
-                    source: Config.options.background.wallpaperPath
+                    source: videoSelected
+                        ? Config.options.background.thumbnailPath
+                        : selectedWallpaper
                     cache: false
                     layer.enabled: true
                     layer.effect: OpacityMask {
@@ -83,6 +95,45 @@ ContentPage {
                         }
                     }
                 }
+
+                Loader {
+                    id: videoWallpaperPreviewLoader
+
+                    anchors.fill: parent
+
+                    // Só cria o player quando o wallpaper é vídeo
+                    // e a área de prévia está visível.
+                    active: wallpaperPreview.videoSelected
+                            && wallpaperPreview.visible
+
+                    sourceComponent: Component {
+                        Video {
+                            source: wallpaperPreview.selectedWallpaper
+
+                            autoPlay: true
+                            muted: true
+                            loops: MediaPlayer.Infinite
+
+                            fillMode: VideoOutput.PreserveAspectCrop
+
+                            // Mantém o frame estático até começar
+                            // a reprodução do vídeo.
+                            visible:
+                                playbackState === MediaPlayer.PlayingState
+
+                            layer.enabled: true
+
+                            layer.effect: OpacityMask {
+                                maskSource: Rectangle {
+                                    width: 360
+                                    height: 200
+                                    radius: Appearance.rounding.normal
+                                }
+                            }
+                        }
+                    }
+                }
+
             }
 
             ColumnLayout {

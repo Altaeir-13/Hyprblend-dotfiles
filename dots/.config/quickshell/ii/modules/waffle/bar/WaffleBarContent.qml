@@ -69,6 +69,7 @@ Rectangle {
             shown: Config.options.waffles.bar.leftAlignApps
             sourceComponent: WidgetsButton {}
         }
+        UiFrontendSwitchButton {}
         Tray {}
         UpdatesButton {}
         SystemButton {}

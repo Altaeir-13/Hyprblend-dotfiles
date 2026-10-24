@@ -1,9 +1,9 @@
 # This is NOT a script for execution, but for loading functions, so NOT need execution permission or shebang.
-XDG_BIN_HOME=${XDG_BIN_HOME:-$HOME/.local/bin}
-XDG_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}
-XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
-XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
-XDG_STATE_HOME=${XDG_STATE_HOME:-$HOME/.local/state}
+export XDG_BIN_HOME=${XDG_BIN_HOME:-$HOME/.local/bin}
+export XDG_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}
+export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
+export XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
+export XDG_STATE_HOME=${XDG_STATE_HOME:-$HOME/.local/state}
 
 STY_RED='\e[31m'
 STY_GREEN='\e[32m'
@@ -28,3 +28,11 @@ BACKUP_DIR="${BACKUP_DIR:-$HOME/ii-original-dots-backup}"
 DOTS_CORE_CONFDIR="${XDG_CONFIG_HOME}/illogical-impulse"
 INSTALLED_LISTFILE="${DOTS_CORE_CONFDIR}/installed_listfile"
 FIRSTRUN_FILE="${DOTS_CORE_CONFDIR}/installed_true"
+
+# Hybrid Rice installer extensions
+INSTALL_PROFILE="${INSTALL_PROFILE:-hybrid}"
+INSTALL_PROFILE_EXPLICIT="${INSTALL_PROFILE_EXPLICIT:-false}"
+DRY_RUN="${DRY_RUN:-false}"
+SKIP_CAELESTIA="${SKIP_CAELESTIA:-false}"
+INSTALL_LOG_DIR="${INSTALL_LOG_DIR:-${XDG_STATE_HOME}/illogical-impulse/logs}"
+INSTALL_LOG_FILE="${INSTALL_LOG_FILE:-}"

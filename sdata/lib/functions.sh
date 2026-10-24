@@ -3,11 +3,108 @@
 
 # shellcheck shell=bash
 
-function try { "$@" || true; }
+function log_event() {
+  if [[ -n "${INSTALL_LOG_FILE:-}" ]] && [[ "${DRY_RUN:-false}" != "true" ]]; then
+    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$INSTALL_LOG_FILE" 2>/dev/null || true
+  fi
+}
+
+function init_install_log() {
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Mode enabled: no system packages, services, or user files will be modified.${STY_RST}"
+    return 0
+  fi
+
+  if [[ -z "${INSTALL_LOG_FILE:-}" ]]; then
+    mkdir -p "$INSTALL_LOG_DIR" 2>/dev/null || INSTALL_LOG_DIR="/tmp"
+    INSTALL_LOG_FILE="${INSTALL_LOG_DIR}/setup-$(date '+%Y%m%d-%H%M%S').log"
+  else
+    mkdir -p "$(dirname "$INSTALL_LOG_FILE")" 2>/dev/null || true
+  fi
+
+  log_event "=== Setup started: subcommand=${SUBCMD_NAME:-unknown} profile=${INSTALL_PROFILE:-hybrid} user=$(whoami) ==="
+  echo -e "${STY_BLUE}[$0]: Logging installation events to: ${INSTALL_LOG_FILE}${STY_RST}"
+}
+
+function load_install_profile() {
+  local profile="${1:-${INSTALL_PROFILE:-hybrid}}"
+  local profile_file="${REPO_ROOT}/sdata/profiles/${profile}.conf"
+
+  if [[ ! -f "$profile_file" ]]; then
+    echo -e "${STY_RED}[$0]: Unknown installation profile \"${profile}\". Valid profiles: minimal, hybrid, complete.${STY_RST}" >&2
+    exit 1
+  fi
+
+  # shellcheck disable=SC1090
+  source "$profile_file"
+  INSTALL_PROFILE="$PROFILE_NAME"
+
+  if [[ "${SKIP_CAELESTIA:-false}" == "true" ]]; then
+    INSTALL_CAELESTIA_HYBRID=false
+  fi
+
+  if [[ "${SKIP_MISCCONF_DEFAULT:-false}" == "true" ]] && [[ -z "${SKIP_MISCCONF:-}" ]]; then
+    SKIP_MISCCONF=true
+    SKIP_PLASMAINTG=true
+  fi
+
+  log_event "Loaded profile: ${INSTALL_PROFILE} (INSTALL_CAELESTIA_HYBRID=${INSTALL_CAELESTIA_HYBRID}, INSTALL_OPTIONAL_APPS=${INSTALL_OPTIONAL_APPS})"
+}
+
+function check_install_prerequisites() {
+  log_event "Checking installation prerequisites..."
+  local required_cmds=(bash git awk sed grep sort find rsync)
+  local missing=()
+  local cmd
+
+  for cmd in "${required_cmds[@]}"; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      missing+=("$cmd")
+    fi
+  done
+
+  if (( ${#missing[@]} > 0 )); then
+    if command -v pacman >/dev/null 2>&1; then
+      echo -e "${STY_YELLOW}[$0]: Installing missing base prerequisite packages via pacman: ${missing[*]}${STY_RST}"
+      sudo pacman -S --needed --noconfirm "${missing[@]}" 2>/dev/null || true
+      missing=()
+      for cmd in "${required_cmds[@]}"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+          missing+=("$cmd")
+        fi
+      done
+    fi
+  fi
+
+  if (( ${#missing[@]} > 0 )); then
+    echo -e "${STY_RED}[$0]: Missing base prerequisite commands: ${missing[*]}${STY_RST}" >&2
+    exit 1
+  fi
+
+  if [[ ! -d "${REPO_ROOT}/dots/.config" ]]; then
+    echo -e "${STY_RED}[$0]: Repository directory \"${REPO_ROOT}/dots/.config\" not found.${STY_RST}" >&2
+    exit 1
+  fi
+
+  check_disk_space "${HOME}" 250 || true
+}
+
+function try {
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] try:${STY_RST} $*"
+    return 0
+  fi
+  "$@" || true
+}
 function v(){
   echo -e "####################################################"
   echo -e "${STY_BLUE}[$0]: Next command:${STY_RST}"
   echo -e "${STY_GREEN}$*${STY_RST}"
+  log_event "NEXT_CMD: $*"
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Would execute:${STY_RST} $*"
+    return 0
+  fi
   local execute=true
   if $ask;then
     while true;do
@@ -28,19 +125,32 @@ function v(){
   fi
   if $execute;then x "$@";else
     echo -e "${STY_YELLOW}[$0]: Skipped \"$*\"${STY_RST}"
+    log_event "SKIPPED_CMD: $*"
   fi
 }
 # When use v() for a defined function, use x() INSIDE its definition to catch errors.
 function x(){
+  log_event "EXEC: $*"
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Would run:${STY_RST} $*"
+    return 0
+  fi
   if "$@";then local cmdstatus=0;else local cmdstatus=1;fi # 0=normal; 1=failed; 2=failed but ignored
   while [ $cmdstatus == 1 ] ;do
+    if [[ "${ask:-true}" == "false" ]]; then
+      break
+    fi
     echo -e "${STY_RED}[$0]: Command \"${STY_GREEN}$*${STY_RED}\" has failed."
     echo -e "You may need to resolve the problem manually BEFORE repeating this command."
     echo -e "[Tip] If a certain package is failing to install, try installing it separately in another terminal.${STY_RST}"
     echo "  r = Repeat this command (DEFAULT)"
     echo "  e = Exit now"
     echo "  i = Ignore this error and continue (your setup might not work correctly)"
-    local p; read -p " [R/e/i]: " p
+    local p
+    if ! read -p " [R/e/i]: " p; then
+      echo -e "${STY_BLUE}EOF on input, will exit.${STY_RST}"
+      break
+    fi
     case $p in
       [iI]) echo -e "${STY_BLUE}Alright, ignore and continue...${STY_RST}";cmdstatus=2;;
       [eE]) echo -e "${STY_BLUE}Alright, will exit.${STY_RST}";break;;
@@ -50,9 +160,13 @@ function x(){
     esac
   done
   case $cmdstatus in
-    0) echo -e "${STY_BLUE}[$0]: Command \"${STY_GREEN}$*${STY_BLUE}\" finished.${STY_RST}";;
-    1) echo -e "${STY_RED}[$0]: Command \"${STY_GREEN}$*${STY_RED}\" has failed. Exiting...${STY_RST}";exit 1;;
-    2) echo -e "${STY_RED}[$0]: Command \"${STY_GREEN}$*${STY_RED}\" has failed but ignored by user.${STY_RST}";;
+    0) echo -e "${STY_BLUE}[$0]: Command \"${STY_GREEN}$*${STY_BLUE}\" finished.${STY_RST}"
+       log_event "SUCCESS: $*";;
+    1) echo -e "${STY_RED}[$0]: Command \"${STY_GREEN}$*${STY_RED}\" has failed. Exiting...${STY_RST}"
+       log_event "FAILED_EXIT: $*"
+       exit 1;;
+    2) echo -e "${STY_RED}[$0]: Command \"${STY_GREEN}$*${STY_RED}\" has failed but ignored by user.${STY_RST}"
+       log_event "FAILED_IGNORED: $*";;
   esac
 }
 function showfun(){
@@ -72,6 +186,10 @@ function remove_bashcomments_emptylines(){
   echo "pwd=$(pwd)"
   echo "input=$1"
   echo "output=$2"
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Would strip comments from $1 to $2${STY_RST}"
+    return 0
+  fi
   mkdir -p "$(dirname "$2")"
   cat "$1" | sed -e 's/#.*//' -e '/^[[:space:]]*$/d' > "$2"
 }
@@ -86,6 +204,11 @@ function prevent_sudo_or_root(){
 declare -g SUDO_KEEPALIVE_PID=""
 
 function sudo_init_keepalive(){
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Skipping sudo keepalive initialization.${STY_RST}"
+    return 0
+  fi
+
   # Check if sudo is available
   if ! command -v sudo >/dev/null 2>&1; then
     return 0
@@ -110,7 +233,7 @@ function sudo_init_keepalive(){
       sleep 60
       sudo true 2>/dev/null || exit 0
     done
-  ) &
+  ) >/dev/null 2>&1 &
   SUDO_KEEPALIVE_PID=$!
 
   echo -e "${STY_GREEN}[$0]: Sudo session initialized and will be kept alive (PID: $SUDO_KEEPALIVE_PID)${STY_RST}"
@@ -118,7 +241,8 @@ function sudo_init_keepalive(){
 
 # Stop the sudo keepalive background process
 function sudo_stop_keepalive(){
-  if [[ -n "$SUDO_KEEPALIVE_PID" ]] && kill -0 "$SUDO_KEEPALIVE_PID" 2>/dev/null; then
+  if [[ -n "$SUDO_KEEPALIVE_PID" ]]; then
+    pkill -P "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
     kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
     wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
     SUDO_KEEPALIVE_PID=""
@@ -337,8 +461,16 @@ function check_disk_space() {
 }
 
 function auto_update_git_submodule(){
-  if git submodule status --recursive | grep -E '^[+-U]';then
+  if git submodule status --recursive 2>/dev/null | grep -E '^[+-U]';then
     # Note: `git pull --recurse-submodules` cannot substitute `git submodule update --init --recursive` cuz it does not init a submodule when needed.
+    # If destination path exists without .git, git will refuse to clone into non-empty dir.
+    local uninit_paths
+    uninit_paths=$(git submodule status --recursive 2>/dev/null | awk '/^[-]/ {print $2}')
+    for p in $uninit_paths; do
+      if [[ -d "$p" && ! -d "$p/.git" && ! -f "$p/.git" ]]; then
+        rm -rf "$p"
+      fi
+    done
     x git submodule update --init --recursive
   fi
 }
@@ -352,6 +484,10 @@ function backup_clashing_targets(){
   local target_dir="$2"
   local backup_dir="$3"
   local -a ignored_list=("${@:4}")
+
+  if [[ ! -d "$source_dir" ]] || [[ ! -d "$target_dir" ]]; then
+    return 0
+  fi
 
   # Find clash dirs/files, save as clash_list
   local clash_list=()
@@ -373,6 +509,10 @@ function backup_clashing_targets(){
   done
   clash_list=("${clash_list[@]}")
 
+  if [[ ${#clash_list[@]} -eq 0 ]]; then
+    return 0
+  fi
+
   # Construct args_includes for rsync
   local args_includes=()
   for i in "${clash_list[@]}"; do
@@ -385,7 +525,7 @@ function backup_clashing_targets(){
   done
   args_includes+=(--exclude='*')
 
-  x mkdir -p $backup_dir
+  x mkdir -p "$backup_dir"
   x rsync -av --progress "${args_includes[@]}" "$target_dir/" "$backup_dir/"
 }
 
@@ -461,6 +601,10 @@ function ensure_cmds(){
 }
 
 function dedup_and_sort_listfile(){
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Would deduplicate and sort listfile: $1${STY_RST}"
+    return 0
+  fi
   if ! test -f "$1"; then
     echo "File not found: $1" >&2; return 2
   else

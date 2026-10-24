@@ -6,6 +6,19 @@ __pycache__/
 *.py[cod]
 
 /dots/.config/quickshell/ii/.qmlls.ini
+/dots/.config/quickshell/caelestia-hybrid/.qmlls.ini
+/dots/.config/caelestia/monitors/
+/dots/.config/hypr/custom/scripts/mpvpaper_thumbnails/
+
+# Hybrid build artifacts & temporary backups
+/build*/
+/tests/vm/workspace/
+*.backup-*
+*.old
+*.old.*
+*.new
+*.so
+*.o
 
 # exp-update
 /.update-lock

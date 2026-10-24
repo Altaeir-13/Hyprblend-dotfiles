@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+
+set -u
+
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+II_CONFIG="$XDG_CONFIG_HOME/illogical-impulse/config.json"
+
+use_hyprlock="$(
+    jq -r '(.lock.useHyprlock // .general.lock.useHyprlock) // false' \
+        "$II_CONFIG" 2>/dev/null \
+        || echo false
+)"
+
+has_instance() {
+    qs list --all 2>/dev/null \
+        | grep -Fq "$1"
+}
+
+
+if [[ "${1:-}" == "--status" ]]; then
+
+    echo "useHyprlock=$use_hyprlock"
+
+    if has_instance "/quickshell/caelestia-hybrid/shell.qml"; then
+        echo "frontend=caelestia"
+        echo "locker=caelestia-quickshell"
+    elif has_instance "/quickshell/ii/shell.qml"; then
+        echo "frontend=end4"
+
+        if [[ "$use_hyprlock" == "true" ]]; then
+            echo "locker=hyprlock"
+        else
+            echo "locker=end4-quickshell"
+        fi
+    else
+        echo "frontend=unknown"
+        echo "locker=hyprlock-fallback"
+    fi
+
+    exit 0
+fi
+
+
+# ------------------------------------------------------------
+# Preferência explícita do end-4: Hyprlock
+# ------------------------------------------------------------
+
+if [[ "$use_hyprlock" == "true" ]]; then
+    pidof hyprlock >/dev/null 2>&1 \
+        || exec hyprlock
+
+    exit 0
+fi
+
+
+# ------------------------------------------------------------
+# CAELESTIA
+# ------------------------------------------------------------
+
+if has_instance "/quickshell/caelestia-hybrid/shell.qml"; then
+
+    if qs -c caelestia-hybrid \
+        ipc call lock lock \
+        >/dev/null 2>&1
+    then
+        exit 0
+    fi
+fi
+
+
+# ------------------------------------------------------------
+# END-4
+# ------------------------------------------------------------
+
+if has_instance "/quickshell/ii/shell.qml"; then
+
+    if qs -c ii \
+        ipc call lock activate \
+        >/dev/null 2>&1
+    then
+        exit 0
+    fi
+fi
+
+
+# ------------------------------------------------------------
+# FALLBACK
+# ------------------------------------------------------------
+
+pidof hyprlock >/dev/null 2>&1 \
+    || exec hyprlock

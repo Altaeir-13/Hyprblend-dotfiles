@@ -67,6 +67,9 @@ if [[ -f "${SUBCMD_DIR}/options.sh" ]];
 fi
 case ${SUBCMD_NAME} in
   install)
+    init_install_log
+    check_install_prerequisites
+    load_install_profile "${INSTALL_PROFILE}"
     for function in ${print_os_group_id_functions[@]}; do
       $function
     done
@@ -78,6 +81,7 @@ case ${SUBCMD_NAME} in
     if [[ "${SKIP_ALLGREETING}" != true ]]; then
       source ${SUBCMD_DIR}/0.greeting.sh
     fi
+    load_install_profile "${INSTALL_PROFILE}"
     if [[ "${SKIP_ALLDEPS}" != true ]]; then
       source ${SUBCMD_DIR}/1.deps-router.sh
     fi
@@ -89,6 +93,9 @@ case ${SUBCMD_NAME} in
     fi
     ;;
   install-deps)
+    init_install_log
+    check_install_prerequisites
+    load_install_profile "${INSTALL_PROFILE}"
     for function in ${print_os_group_id_functions[@]}; do
       $function
     done
@@ -102,6 +109,9 @@ case ${SUBCMD_NAME} in
     fi
     ;;
   install-setups)
+    init_install_log
+    check_install_prerequisites
+    load_install_profile "${INSTALL_PROFILE}"
     for function in ${print_os_group_id_functions[@]}; do
       $function
     done
@@ -115,6 +125,9 @@ case ${SUBCMD_NAME} in
     fi
     ;;
   install-files)
+    init_install_log
+    check_install_prerequisites
+    load_install_profile "${INSTALL_PROFILE}"
     for function in ${print_os_group_id_functions[@]}; do
       $function
     done

@@ -7,6 +7,13 @@ Idempotent installation for dotfiles.
 
 Options for install:
   -h, --help                Print this help message and exit
+  -p, --profile <profile>   Installation profile: minimal | hybrid | complete (default: hybrid)
+                              minimal  = Hyprland + end-4 (ii)
+                              hybrid   = Hyprland + end-4 (ii) + Caelestia Hybrid
+                              complete = Hybrid + optional apps & full customizations
+  -n, --dry-run             Simulate installation steps without modifying packages or files
+      --log-file <path>     Write installation log to <path>
+      --skip-caelestia      Skip installing Caelestia Hybrid frontend and plugin
   -f, --force               (Dangerous) Force mode without any confirm
   -F, --fisrtrun            Act like it is the first run
   -c, --clean               Clean the build cache first
@@ -41,13 +48,17 @@ ${STY_RST}"
 }
 
 cleancache(){
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Would clean cache directory: ${REPO_ROOT}/cache${STY_RST}"
+    return 0
+  fi
   rm -rf "${REPO_ROOT}/cache"
 }
 
 # `man getopt` to see more
 para=$(getopt \
-  -o hfFk:cs \
-  -l help,force,firstrun,fontset:,clean,skip-allgreeting,skip-alldeps,skip-allsetups,skip-allfiles,ignore-outdate,skip-sysupdate,skip-plasmaintg,skip-backup,skip-quickshell,skip-fish,skip-hyprland,skip-hyprland-entry,skip-fontconfig,skip-miscconf,core,exp-files,via-nix \
+  -o hfFp:nk:cs \
+  -l help,force,firstrun,profile:,dry-run,log-file:,skip-caelestia,fontset:,clean,skip-allgreeting,skip-alldeps,skip-allsetups,skip-allfiles,ignore-outdate,skip-sysupdate,skip-plasmaintg,skip-backup,skip-quickshell,skip-fish,skip-hyprland,skip-hyprland-entry,skip-fontconfig,skip-miscconf,core,exp-files,via-nix \
   -n "$0" -- "$@")
 [ $? != 0 ] && echo "$0: Error when getopt, please recheck parameters." && exit 1
 #####################################################################################
@@ -57,7 +68,7 @@ eval set -- "$para"
 while true ; do
   case "$1" in
     -h|--help) showhelp;exit;;
-    -c|--clean) cleancache;shift;;
+    -n|--dry-run) DRY_RUN=true;ask=false;shift;;
     --) shift;break ;;
     *) shift ;;
   esac
@@ -68,11 +79,13 @@ done
 eval set -- "$para"
 while true ; do
   case "$1" in
-    ## Already processed in phase 1, but not exited
-    -c|--clean) shift;;
+    ## Clean build cache (after DRY_RUN is parsed in Phase 1)
+    -c|--clean) cleancache;shift;;
     ## Ones without parameter
     -f|--force) ask=false;shift;;
     -F|--firstrun) INSTALL_FIRSTRUN=true;shift;;
+    -n|--dry-run) DRY_RUN=true;ask=false;shift;;
+    --skip-caelestia) SKIP_CAELESTIA=true;shift;;
     --skip-allgreeting) SKIP_ALLGREETING=true;shift;;
     --skip-alldeps) SKIP_ALLDEPS=true;shift;;
     --skip-allsetups) SKIP_ALLSETUPS=true;shift;;
@@ -87,11 +100,28 @@ while true ; do
     --skip-quickshell) SKIP_QUICKSHELL=true;shift;;
     --skip-fontconfig) SKIP_FONTCONFIG=true;shift;;
     --skip-miscconf) SKIP_MISCCONF=true;shift;;
-    --core) SKIP_PLASMAINTG=true;SKIP_FISH=true;SKIP_FONTCONFIG=true;SKIP_MISCCONF=true;shift;;
+    --core) INSTALL_PROFILE="minimal";INSTALL_PROFILE_EXPLICIT=true;SKIP_PLASMAINTG=true;SKIP_FISH=true;SKIP_FONTCONFIG=true;SKIP_MISCCONF=true;shift;;
     --exp-files) EXPERIMENTAL_FILES_SCRIPT=true;shift;;
     --via-nix) INSTALL_VIA_NIX=true;shift;;
     
     ## Ones with parameter
+    -p|--profile)
+      case "$2" in
+        minimal|hybrid|complete)
+          INSTALL_PROFILE="$2"
+          INSTALL_PROFILE_EXPLICIT=true
+          shift 2
+          ;;
+        *)
+          echo "Invalid profile \"$2\". Use minimal, hybrid, or complete."
+          exit 1
+          ;;
+      esac
+      ;;
+    --log-file)
+      INSTALL_LOG_FILE="$2"
+      shift 2
+      ;;
     --fontset)
     if [[ -d "${REPO_ROOT}/dots-extra/fontsets/$2" ]];
       then echo "Using fontset \"$2\".";FONTSET_DIR_NAME="$2";shift 2
