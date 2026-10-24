@@ -21,6 +21,8 @@ O **Hyprland Hybrid Rice** une o melhor de dois ecossistemas visuais líderes pa
 
 A alternância entre as duas interfaces ocorre em **tempo de execução com um único clique ou atalho**, preservando o estado do compositor, a paleta de cores ativas e os atalhos de hardware.
 
+**Release:** [`v0.1.0-beta`](https://github.com/Altaeir-13/dots-hyprland/releases/tag/v0.1.0-beta) · **Repositório:** <https://github.com/Altaeir-13/dots-hyprland> · **Licença:** [GPL-3.0](./LICENSE)
+
 ---
 
 ## Capturas de Tela
@@ -63,8 +65,19 @@ A alternância entre as duas interfaces ocorre em **tempo de execução com um �
 
 ## Distribuições Suportadas
 
+| Sistema | Status | Observação |
+| :--- | :--- | :--- |
+| **Arch Linux** (`x86_64`) | ✅ Oficialmente suportado | Validado em CI (testes sandbox) e em VM Arch Linux. |
+| Derivadas do Arch (EndeavourOS, CachyOS, Manjaro, Garuda…) | ⚠️ Usam o caminho do Arch, **não testadas** por este projeto | Detectadas pelo instalador como `arch` (por `ID` ou `ID_LIKE=arch`; neste último caso com o aviso upstream de correspondência por semelhança). |
+| Fedora, Gentoo, Nix (`--via-nix`), Debian/Ubuntu/openSUSE e outras | ❌ Sem suporte oficial | Código herdado do upstream mantido; **exige confirmação explícita** (ver abaixo). |
+
 - **Arch Linux:** **Oficialmente suportado e homologado.** O instalador resolve automaticamente metapacotes PKGBUILD, dependências oficiais e pacotes do AUR via `yay-bin`.
-- **Outras Distribuições:** No momento, implementações para Fedora, NixOS ou Gentoo presentes no upstream do illogical-impulse não foram homologadas para o rice híbrido e encontram-se desativadas nesta versão beta.
+- **Outras Distribuições (sem suporte oficial):** o código herdado do upstream `end-4/dots-hyprland` para **Fedora** (`sdata/dist-fedora`), **Gentoo** (`sdata/dist-gentoo`) e **Nix / `--via-nix`** (`sdata/dist-nix`, também usado como fallback para Debian, openSUSE e distribuições não reconhecidas) **continua presente no repositório e não foi removido**, em respeito ao projeto original. Porém, **essas implementações não possuem suporte oficial no Hybrid Rice e não foram validadas com a integração Caelestia** (plugin `Caelestia`, `libcava`, `qt6-m3shapes`, `ui-switch.sh`, pontes de cores). Elas só instalam as dependências do end-4; o frontend Caelestia pode ficar incompleto ou não funcionar.
+  - **O que o instalador faz fora do Arch:** exibe um aviso vermelho de distribuição não suportada **antes de qualquer alteração no sistema, antes da criação de arquivos de log e antes de qualquer chamada ao gerenciador de pacotes**.
+  - **Subcomandos que modificam o sistema ou o ambiente do usuário:** `./setup install`, `./setup install-deps`, `./setup install-setups`, `./setup install-files` (que executa sincronizações com `rsync --delete` em pastas gerenciadas), `./setup exp-update`, `./setup exp-merge` e `./setup uninstall` exigem confirmação interativa explícita (`[y/N]`, padrão **Não**).
+  - Em modo não interativo (`-f` / `--force`), o instalador **aborta imediatamente sem efeitos colaterais** (zero arquivos criados ou modificados, inclusive logs), a menos que a autorização explícita seja fornecida via variável de ambiente: `HYBRID_ALLOW_UNSUPPORTED_DISTRO=true`.
+  - Simulações com `--dry-run` e subcomandos puramente informativos (como `help`, `checkdeps`) exibem o aviso sem abortar.
+  - Para prosseguir por sua conta e risco (não recomendado): `HYBRID_ALLOW_UNSUPPORTED_DISTRO=true ./setup install --profile minimal -f`.
 
 ---
 
@@ -87,6 +100,13 @@ Clone o repositório com todos os submódulos necessários a partir da branch pr
 git clone --recursive https://github.com/Altaeir-13/dots-hyprland.git ~/dots-hyprland
 cd ~/dots-hyprland
 ```
+
+Para instalar exatamente a versão publicada (recomendado para reproduzibilidade), use a tag da release:
+```bash
+git clone --recursive --branch v0.1.0-beta https://github.com/Altaeir-13/dots-hyprland.git ~/dots-hyprland
+cd ~/dots-hyprland
+```
+> O `git` precisa estar instalado antes do clone (`sudo pacman -S --needed git`). O instalador instala os demais pré-requisitos (como `rsync`) no Arch Linux.
 
 ### 2. Simulação Não-Destrutiva (Recomendado)
 Antes de efetuar alterações, você pode testar a instalação sem modificar arquivos:
@@ -215,17 +235,26 @@ Caso uma transição trave ou uma customização impeça o carregamento da inter
 
 ---
 
+## Desenvolvimento e CI
+
+- **Testes locais (sandbox, sem tocar no sistema):** `bash tests/run-tests.sh`.
+- **CI (`.github/workflows/ci.yml`):** executa `Static Syntax & Portability Checks` e `Automated Regression Test Suite (Sandboxed)` em cada Pull Request e push para `main`.
+- **Workflows herdados do upstream** (moderação automática, notificações do end-4) foram **desativados** e estão preservados em [`.github/workflows-disabled/`](./.github/workflows-disabled/README.md), com a justificativa de cada decisão.
+- O README original do upstream foi preservado em [`docs/upstream/END4-README.md`](./docs/upstream/END4-README.md).
+
+---
+
 ## Atribuições e Licenciamento
 
 Este projeto respeita e preserva integralmente os direitos dos autores originais:
 
-- **Base do Sistema e Frontend `ii` / `waffle`:**  
-  Desenvolvido por **[end-4](https://github.com/end-4)** sob a licença **GNU GPLv3**.  
+- **Base do Sistema e Frontend `ii` / `waffle`:**
+  Desenvolvido por **[end-4](https://github.com/end-4)** sob a licença **GNU GPLv3**.
   Consulte [`LICENSE`](./LICENSE) para o texto completo da licença.
-- **Frontend Caelestia Hybrid e Plugin C++:**  
-  Desenvolvido pela equipe **[Caelestia Dots](https://github.com/caelestia-dots/shell)** sob a licença **GNU GPLv3**.  
+- **Frontend Caelestia Hybrid e Plugin C++:**
+  Desenvolvido pela equipe **[Caelestia Dots](https://github.com/caelestia-dots/shell)** sob a licença **GNU GPLv3**.
   Código do plugin compilado e integrado a partir da revisão upstream fixada `454f46da`.
-- **Camada de Integração Híbrida (`ui-switch.sh`, `rice-lock`, bridges de cores e vídeo):**  
+- **Camada de Integração Híbrida (`ui-switch.sh`, `rice-lock`, bridges de cores e vídeo):**
   Licenciada sob a licença **GNU GPLv3**.
 - **Tipografia e Fontes:**
   - *Google Sans Flex*: Open Font License (OFL).

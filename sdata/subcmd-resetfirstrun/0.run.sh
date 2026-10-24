@@ -3,4 +3,8 @@
 
 # shellcheck shell=bash
 
-try rm "${FIRSTRUN_FILE}"
+if [[ "${DRY_RUN:-false}" == "true" ]]; then
+  echo -e "${STY_YELLOW}[DRY-RUN] Would remove firstrun state file: ${FIRSTRUN_FILE}${STY_RST}"
+else
+  try rm "${FIRSTRUN_FILE}"
+fi

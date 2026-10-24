@@ -65,15 +65,26 @@ esac
 if [[ -f "${SUBCMD_DIR}/options.sh" ]];
   then source "${SUBCMD_DIR}/options.sh"
 fi
+
+# Hyprland Hybrid Rice: distribution verification and consent guard
+# Protects all subcommands modifying system packages, permissions, configs, dotfiles, or state
+case ${SUBCMD_NAME} in
+  install|install-deps|install-setups|install-files|uninstall|exp-update|exp-merge|resetfirstrun)
+    for function in ${print_os_group_id_functions[@]}; do
+      $function
+    done
+    pause
+    if [[ "${CLEAN_CACHE:-false}" == "true" ]]; then
+      cleancache
+    fi
+    ;;
+esac
+
 case ${SUBCMD_NAME} in
   install)
     init_install_log
     check_install_prerequisites
     load_install_profile "${INSTALL_PROFILE}"
-    for function in ${print_os_group_id_functions[@]}; do
-      $function
-    done
-    pause
     # Initialize sudo keepalive for the entire install process
     sudo_init_keepalive
     # Set trap to cleanup when this subcommand exits
@@ -96,10 +107,6 @@ case ${SUBCMD_NAME} in
     init_install_log
     check_install_prerequisites
     load_install_profile "${INSTALL_PROFILE}"
-    for function in ${print_os_group_id_functions[@]}; do
-      $function
-    done
-    pause
     # Initialize sudo keepalive for dependency installation
     sudo_init_keepalive
     # Set trap to cleanup when this subcommand exits
@@ -112,10 +119,6 @@ case ${SUBCMD_NAME} in
     init_install_log
     check_install_prerequisites
     load_install_profile "${INSTALL_PROFILE}"
-    for function in ${print_os_group_id_functions[@]}; do
-      $function
-    done
-    pause
     # Initialize sudo keepalive for setup steps
     sudo_init_keepalive
     # Set trap to cleanup when this subcommand exits
@@ -128,10 +131,6 @@ case ${SUBCMD_NAME} in
     init_install_log
     check_install_prerequisites
     load_install_profile "${INSTALL_PROFILE}"
-    for function in ${print_os_group_id_functions[@]}; do
-      $function
-    done
-    pause
     if [[ "${SKIP_ALLFILES}" != true ]]; then
       source ${SUBCMD_DIR}/3.files.sh
     fi

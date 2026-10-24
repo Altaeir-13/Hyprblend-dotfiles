@@ -3,6 +3,11 @@
 
 # shellcheck shell=bash
 
+if [[ "${DRY_RUN:-false}" == "true" ]]; then
+  echo -e "${STY_YELLOW}[DRY-RUN] Would revert installation steps and remove dotfiles.${STY_RST}"
+  return 0 2>/dev/null || exit 0
+fi
+
 printf "${STY_RED}"
 printf "===CAUTION===\n"
 printf "This script will try to revert changes made by \"./setup install\".\n"

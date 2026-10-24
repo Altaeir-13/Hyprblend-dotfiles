@@ -26,8 +26,8 @@ How it works:
 }
 
 para=$(getopt \
-  -o hns \
-  -l help,dry-run,skip-notice,skip-fetch \
+  -o hfns \
+  -l help,force,dry-run,skip-notice,skip-fetch \
   -n "$0" -- "$@")
 [ $? != 0 ] && echo "$0: Error when getopt, please recheck parameters." && exit 1
 
@@ -47,6 +47,7 @@ SKIP_NOTICE=false
 eval set -- "$para"
 while true ; do
   case "$1" in
+    -f|--force) ask=false;shift;;
     -n|--dry-run) DRY_RUN=true;shift
       log_info "Dry-run mode enabled - no changes will be made"
       ;;

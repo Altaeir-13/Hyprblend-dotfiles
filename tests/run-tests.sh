@@ -22,10 +22,24 @@ CLR_YELLOW='\e[33m'
 CLR_RST='\e[0m'
 
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/hybrid-rice-test-suite.XXXXXX")"
+# Ensure test suite operates under a simulated Arch Linux environment on non-Arch hosts (e.g. Ubuntu GitHub Actions runner)
+# Mock os-release strictly inside TEST_ROOT and export OS_RELEASE_FILE so the repository root is never modified
+MOCK_ARCH_OS_RELEASE="$TEST_ROOT/os-release"
+printf 'ID=arch\nID_LIKE=\n' > "$MOCK_ARCH_OS_RELEASE"
+export OS_RELEASE_FILE="$MOCK_ARCH_OS_RELEASE"
+
+# Capture initial state of ${REPO_ROOT}/os-release to verify it is never mutated or removed
+INITIAL_REPO_OS_RELEASE_EXISTS=false
+INITIAL_REPO_OS_RELEASE_SHA=""
+if [[ -f "${REPO_ROOT}/os-release" ]]; then
+    INITIAL_REPO_OS_RELEASE_EXISTS=true
+    INITIAL_REPO_OS_RELEASE_SHA="$(sha256sum "${REPO_ROOT}/os-release" 2>/dev/null || true)"
+fi
+
 cleanup_suite() {
     chmod -R u+w "$TEST_ROOT" 2>/dev/null || true
     rm -rf "$TEST_ROOT" 2>/dev/null || true
-    rm -rf "${REPO_ROOT}/cache/.test_dry_run_sentinel" 2>/dev/null || true
+    # NOTE: Never touch, write to, or remove ${REPO_ROOT}/os-release or ${REPO_ROOT}/cache
 }
 trap cleanup_suite EXIT INT TERM
 
@@ -83,6 +97,20 @@ assert_not_exists() {
     else
         fail "$msg" "path should not exist: $path"
     fi
+}
+
+# -----------------------------------------------------------------------------
+# Helper: Create an isolated repository directory with symlinks to real assets
+# -----------------------------------------------------------------------------
+create_isolated_repo() {
+    local name="$1"
+    local iso="$TEST_ROOT/$name"
+    mkdir -p "$iso"
+    cp "${REPO_ROOT}/setup" "$iso/setup"
+    ln -s "${REPO_ROOT}/sdata" "$iso/sdata"
+    ln -s "${REPO_ROOT}/dots" "$iso/dots"
+    ln -s "${REPO_ROOT}/dots-extra" "$iso/dots-extra"
+    printf '%s\n' "$iso"
 }
 
 # -----------------------------------------------------------------------------
@@ -251,6 +279,27 @@ fi
 exit 0
 EOF
 
+        # Mock `pacman`
+    cat > "$sb/bin/pacman" <<'MOCK_PACMAN'
+#!/usr/bin/env bash
+STATE_DIR="${MOCK_STATE_DIR:-/tmp}"
+echo "pacman $*" >> "$STATE_DIR/commands.log"
+case "${1:-}" in
+    -Qq) exit 1 ;;
+    -Qeq) echo ""; exit 0 ;;
+    -S|-Syu|-R) exit 0 ;;
+    *) exit 0 ;;
+esac
+MOCK_PACMAN
+
+    # Mock `yay`
+    cat > "$sb/bin/yay" <<'MOCK_YAY'
+#!/usr/bin/env bash
+STATE_DIR="${MOCK_STATE_DIR:-/tmp}"
+echo "yay $*" >> "$STATE_DIR/commands.log"
+exit 0
+MOCK_YAY
+
     chmod +x "$sb/bin/"*
     printf '%s\n' "$sb"
 }
@@ -318,10 +367,11 @@ fi
 
 printf "\n${CLR_CYAN}=== 2. Testes de Segurança do modo --dry-run (Zero Mutação) ===${CLR_RST}\n"
 
-sb_dry="$(create_sandbox "dryrun")"
-mkdir -p "${REPO_ROOT}/cache"
-touch "${REPO_ROOT}/cache/.test_dry_run_sentinel"
+iso_dry="$(create_isolated_repo "dryrun-clean-repo")"
+mkdir -p "$iso_dry/cache"
+touch "$iso_dry/cache/.test_dry_run_sentinel"
 
+sb_dry="$(create_sandbox "dryrun")"
 PATH="$sb_dry/bin:$PATH" \
 MOCK_STATE_DIR="$sb_dry/mock-state" \
 HOME="$sb_dry/home" \
@@ -330,10 +380,9 @@ XDG_DATA_HOME="$sb_dry/home/.local/share" \
 XDG_STATE_HOME="$sb_dry/home/.local/state" \
 XDG_CACHE_HOME="$sb_dry/home/.cache" \
 XDG_BIN_HOME="$sb_dry/home/.local/bin" \
-./setup install --clean --dry-run -p complete --skip-allgreeting >/dev/null
+"$iso_dry/setup" install --clean --dry-run -p complete --skip-allgreeting >/dev/null
 
-assert_file_exists "${REPO_ROOT}/cache/.test_dry_run_sentinel" "--clean --dry-run preserva diretório cache do repositório"
-rm -f "${REPO_ROOT}/cache/.test_dry_run_sentinel"
+assert_file_exists "$iso_dry/cache/.test_dry_run_sentinel" "--clean --dry-run preserva diretório cache do repositório"
 
 dry_files_count="$(find "$sb_dry/home" -mindepth 1 | wc -l)"
 assert_eq "$dry_files_count" "0" "./setup install --dry-run não cria nenhum arquivo ou diretório no HOME alvo"
@@ -1044,6 +1093,272 @@ fi
     [[ "$latest_rec" == "$d4" ]] || exit 9
 ) && pass "Backups: unicidade garantida em reexecuções rápidas e zero sobrescrita em colisões de timestamp" \
   || fail "Backups: falha na resolução de colisão de timestamp ou sobrescrita de backup anterior"
+
+printf "\n${CLR_CYAN}=== 9. Aviso e consentimento para distribuições não suportadas ===${CLR_RST}\n"
+
+# Runs print_os_group_id_hybrid_unsupported in an isolated subshell, with a fake
+# os-release (picked up through REPO_ROOT/os-release) and no side effects on the host.
+# Usage: run_distro_guard <os-id> <os-id-like> <subcmd> <extra env assignments...>
+# Echoes combined output; the return code is the guard's exit code.
+run_distro_guard() {
+    local os_id="$1" os_like="$2" subcmd="$3"; shift 3
+    local gdir; gdir="$(mktemp -d "$TEST_ROOT/distro-guard.XXXXXX")"
+    printf 'ID=%s\nID_LIKE=%s\n' "$os_id" "$os_like" > "$gdir/os-release"
+    (
+        env "$@" REPO_ROOT="$gdir" OS_RELEASE_FILE="$gdir/os-release" SUBCMD_NAME="$subcmd" bash -c '
+            source "'"${REPO_ROOT}"'/sdata/lib/environment-variables.sh"
+            source "'"${REPO_ROOT}"'/sdata/lib/dist-determine.sh"
+            print_os_group_id_hybrid_unsupported
+        ' 2>&1
+    )
+}
+
+# 9.1 Arch Linux: completely silent no-op (installer behavior unchanged)
+rc=0; out="$(run_distro_guard arch "" install ask=false)" || rc=$?
+if [[ $rc -eq 0 && "$out" != *"UNSUPPORTED"* ]]; then
+    pass "Distro: Arch Linux não exibe aviso nem exige consentimento"
+else
+    fail "Distro: Arch Linux foi afetado pelo aviso de distro não suportada" "rc=$rc"
+fi
+
+# 9.2 Fedora, non-interactive install without opt-in: aborts before any change
+rc=0; out="$(run_distro_guard fedora "" install ask=false)" || rc=$?
+if [[ $rc -eq 1 && "$out" == *"UNSUPPORTED"* && "$out" == *"HYBRID_ALLOW_UNSUPPORTED_DISTRO"* ]]; then
+    pass "Distro: Fedora com 'install -f' é bloqueado antes de qualquer alteração e explica como prosseguir"
+else
+    fail "Distro: Fedora com 'install -f' não foi bloqueado" "rc=$rc"
+fi
+
+# 9.3 Gentoo/Debian-like/unknown also blocked (nix fallback path included)
+for spec in "gentoo:" "ubuntu:debian" "somethingelse:"; do
+    rc=0; out="$(run_distro_guard "${spec%%:*}" "${spec#*:}" install-deps ask=false)" || rc=$?
+    assert_eq "$rc" "1" "Distro: '${spec%%:*}' bloqueado em 'install-deps -f' sem consentimento explícito"
+done
+
+# 9.4 Explicit opt-in allows non-interactive install
+rc=0; out="$(run_distro_guard fedora "" install ask=false HYBRID_ALLOW_UNSUPPORTED_DISTRO=true)" || rc=$?
+assert_eq "$rc" "0" "Distro: HYBRID_ALLOW_UNSUPPORTED_DISTRO=true libera a instalação não interativa (mantém suporte herdado)"
+
+# 9.5 --dry-run never aborts (no system change)
+rc=0; out="$(run_distro_guard fedora "" install ask=false DRY_RUN=true)" || rc=$?
+if [[ $rc -eq 0 && "$out" == *"UNSUPPORTED"* ]]; then
+    pass "Distro: --dry-run exibe o aviso mas não aborta"
+else
+    fail "Distro: --dry-run foi abortado ou não exibiu aviso" "rc=$rc"
+fi
+
+# 9.6 Subcomandos modificadores protegidos pela guarda (função isolada)
+for subcmd in install-setups install-files exp-update exp-merge uninstall resetfirstrun; do
+    rc=0; out="$(run_distro_guard fedora "" "$subcmd" ask=false)" || rc=$?
+    assert_eq "$rc" "1" "Distro: '$subcmd -f' bloqueado em distro não suportada sem autorização explícita"
+    rc=0; out="$(run_distro_guard fedora "" "$subcmd" ask=false HYBRID_ALLOW_UNSUPPORTED_DISTRO=true)" || rc=$?
+    assert_eq "$rc" "0" "Distro: '$subcmd -f' liberado com HYBRID_ALLOW_UNSUPPORTED_DISTRO=true"
+done
+
+# 9.6b Execução end-to-end de ./setup: todos os subcomandos modificadores protegidos e sem efeitos colaterais
+for test_subcmd in install install-deps install-setups install-files uninstall exp-update exp-merge resetfirstrun; do
+    sb_guard="$(create_sandbox "guard-side-effects-$test_subcmd")"
+    printf 'ID=fedora\n' > "$sb_guard/os-release"
+
+    # For resetfirstrun, seed the real firstrun marker ($XDG_CONFIG_HOME/illogical-impulse/installed_true)
+    if [[ "$test_subcmd" == "resetfirstrun" ]]; then
+        mkdir -p "$sb_guard/home/.config/illogical-impulse"
+        printf 'INSTALLED_TRUE_PERSISTENT_MARKER\n' > "$sb_guard/home/.config/illogical-impulse/installed_true"
+    fi
+
+    guard_exit=0
+    (
+        export HOME="$sb_guard/home"
+        export XDG_CONFIG_HOME="$sb_guard/home/.config"
+        export XDG_DATA_HOME="$sb_guard/home/.local/share"
+        export XDG_STATE_HOME="$sb_guard/home/.local/state"
+        export XDG_CACHE_HOME="$sb_guard/home/.cache"
+        export XDG_BIN_HOME="$sb_guard/home/.local/bin"
+        export REPO_ROOT="${REPO_ROOT}"
+        export PATH="$sb_guard/bin:$PATH"
+        export OS_RELEASE_FILE="$sb_guard/os-release"
+
+        ./setup "$test_subcmd" -f --skip-allgreeting >/dev/null 2>&1
+    ) || guard_exit=$?
+
+    assert_eq "$guard_exit" "1" "Distro E2E: ./setup $test_subcmd -f em Fedora aborta com código 1 antes de qualquer ação"
+
+    if [[ "$test_subcmd" == "resetfirstrun" ]]; then
+        # Check that the real firstrun marker installed_true was preserved upon refusal
+        true_marker="$sb_guard/home/.config/illogical-impulse/installed_true"
+        if [[ -f "$true_marker" ]] && [[ "$(cat "$true_marker")" == "INSTALLED_TRUE_PERSISTENT_MARKER" ]]; then
+            pass "Distro E2E: XDG_CONFIG_HOME/illogical-impulse/installed_true permanece intacto após recusa em ./setup resetfirstrun"
+        else
+            fail "Distro E2E: XDG_CONFIG_HOME/illogical-impulse/installed_true foi excluído indevidamente antes do consentimento"
+        fi
+    else
+        # Check that zero files or directories were created inside HOME (no logs, no config files)
+        side_effects_count="$(find "$sb_guard/home" -mindepth 1 2>/dev/null | wc -l)"
+        assert_eq "$side_effects_count" "0" "Distro E2E: zero efeitos colaterais em HOME após recusa em ./setup $test_subcmd (inclusive logs)"
+    fi
+
+    # Check that mock pacman in sandbox was NOT called
+    if [[ -f "$sb_guard/mock-state/commands.log" ]] && grep -qi "pacman" "$sb_guard/mock-state/commands.log"; then
+        fail "Distro E2E: pacman foi chamado antes da guarda de autorização em ./setup $test_subcmd"
+    else
+        pass "Distro E2E: nenhuma chamada a gerenciador de pacotes antes da autorização em ./setup $test_subcmd"
+    fi
+done
+
+# Teste complementar: resetfirstrun com consentimento explícito remove installed_true
+sb_rf_allow="$(create_sandbox "resetfirstrun-allow")"
+printf 'ID=fedora\n' > "$sb_rf_allow/os-release"
+mkdir -p "$sb_rf_allow/home/.config/illogical-impulse"
+printf 'INSTALLED_TRUE_TO_REMOVE\n' > "$sb_rf_allow/home/.config/illogical-impulse/installed_true"
+(
+    export HOME="$sb_rf_allow/home"
+    export XDG_CONFIG_HOME="$sb_rf_allow/home/.config"
+    export OS_RELEASE_FILE="$sb_rf_allow/os-release"
+    export HYBRID_ALLOW_UNSUPPORTED_DISTRO=true
+    ./setup resetfirstrun -f >/dev/null 2>&1
+) || true
+if [[ ! -f "$sb_rf_allow/home/.config/illogical-impulse/installed_true" ]]; then
+    pass "Distro E2E: ./setup resetfirstrun remove installed_true após autorização explícita"
+else
+    fail "Distro E2E: ./setup resetfirstrun não removeu installed_true mesmo após autorização"
+fi
+
+# 9.6c Comandos exclusivamente informativos não sofrem bloqueio da guarda
+for info_cmd in "help" "--help"; do
+    info_exit=0
+    (
+        export OS_RELEASE_FILE="$MOCK_ARCH_OS_RELEASE"
+        ./setup $info_cmd >/dev/null 2>&1
+    ) || info_exit=$?
+    assert_eq "$info_exit" "0" "Informativo: ./setup $info_cmd conclui com código 0"
+done
+
+# 9.6d Regressão: Ausência de side effect de '--clean' antes do consentimento (isolado em repositório temporário)
+iso_clean="$(create_isolated_repo "guard-clean-repo")"
+mkdir -p "$iso_clean/cache"
+clean_sentinel="$iso_clean/cache/sentinel_test_clean"
+printf 'CACHE_PAYLOAD_BEFORE_GUARD\n' > "$clean_sentinel"
+
+sb_clean="$(create_sandbox "guard-clean-test")"
+printf 'ID=fedora\n' > "$sb_clean/os-release"
+
+clean_exit=0
+(
+    export HOME="$sb_clean/home"
+    export PATH="$sb_clean/bin:$PATH"
+    export OS_RELEASE_FILE="$sb_clean/os-release"
+    "$iso_clean/setup" install -f --clean --skip-allgreeting >/dev/null 2>&1
+) || clean_exit=$?
+
+assert_eq "$clean_exit" "1" "Distro: ./setup install -f --clean em Fedora aborta com código 1 antes de qualquer ação"
+if [[ -f "$clean_sentinel" ]] && [[ "$(cat "$clean_sentinel")" == "CACHE_PAYLOAD_BEFORE_GUARD" ]]; then
+    pass "Distro: cache preexistente permanece intacto após recusa em ./setup install -f --clean"
+else
+    fail "Distro: cache foi limpo ou modificado antes da guarda de consentimento"
+fi
+
+# Testar que --clean preserva cache em --dry-run no Arch Linux (isolado em repositório temporário)
+iso_arch="$(create_isolated_repo "guard-clean-arch-repo")"
+mkdir -p "$iso_arch/cache"
+clean_arch_sentinel="$iso_arch/cache/sentinel_arch_clean"
+printf 'ARCH_CACHE_PAYLOAD\n' > "$clean_arch_sentinel"
+sb_arch_clean="$(create_sandbox "guard-clean-arch-test")"
+printf 'ID=arch\n' > "$sb_arch_clean/os-release"
+(
+    export HOME="$sb_arch_clean/home"
+    export PATH="$sb_arch_clean/bin:$PATH"
+    export OS_RELEASE_FILE="$sb_arch_clean/os-release"
+    "$iso_arch/setup" install --clean --dry-run >/dev/null 2>&1
+) || true
+if [[ -f "$clean_arch_sentinel" ]]; then
+    pass "Distro: ./setup install --clean --dry-run preserva cache conforme esperado"
+else
+    fail "Distro: --dry-run removeu o cache indevidamente"
+fi
+
+# 9.6e Segurança do arquivo os-release: suíte preserva override preexistente e ausência sem modificar a raiz real
+# Cenário 1: Repositório com arquivo os-release preexistente (override local legítimo)
+iso_os_present="$(create_isolated_repo "os-release-isolated-present")"
+sentinel_os_release="ID=custom_local_override_do_not_delete"
+printf '%s\n' "$sentinel_os_release" > "$iso_os_present/os-release"
+sentinel_sha="$(sha256sum "$iso_os_present/os-release")"
+
+sb_os_present="$(create_sandbox "os-release-present-test")"
+printf 'ID=arch\n' > "$sb_os_present/os-release"
+(
+    export HOME="$sb_os_present/home"
+    export OS_RELEASE_FILE="$sb_os_present/os-release"
+    "$iso_os_present/setup" install --dry-run >/dev/null 2>&1
+) || true
+
+current_present_sha="$(sha256sum "$iso_os_present/os-release" 2>/dev/null || true)"
+if [[ -f "$iso_os_present/os-release" ]] && [[ "$current_present_sha" == "$sentinel_sha" ]]; then
+    pass "Suíte isolada (cenário preexistente): os-release é estritamente preservado com conteúdo inalterado"
+else
+    fail "Suíte isolada (cenário preexistente): os-release foi modificado ou excluído indevidamente"
+fi
+
+# Cenário 2: Repositório sem arquivo os-release preexistente (ausente)
+iso_os_absent="$(create_isolated_repo "os-release-isolated-absent")"
+sb_os_absent="$(create_sandbox "os-release-absent-test")"
+printf 'ID=arch\n' > "$sb_os_absent/os-release"
+(
+    export HOME="$sb_os_absent/home"
+    export OS_RELEASE_FILE="$sb_os_absent/os-release"
+    "$iso_os_absent/setup" install --dry-run >/dev/null 2>&1
+) || true
+
+if [[ ! -e "$iso_os_absent/os-release" ]]; then
+    pass "Suíte isolada (cenário ausente): nenhum arquivo os-release espúrio é criado no repositório"
+else
+    fail "Suíte isolada (cenário ausente): arquivo os-release foi criado indevidamente no repositório"
+fi
+
+# Verificação da raiz de trabalho real: comprovar que o estado original permanece intacto (presente ou ausente)
+if [[ "$INITIAL_REPO_OS_RELEASE_EXISTS" == "true" ]]; then
+    current_repo_sha="$(sha256sum "${REPO_ROOT}/os-release" 2>/dev/null || true)"
+    if [[ "$current_repo_sha" == "$INITIAL_REPO_OS_RELEASE_SHA" ]]; then
+        pass "Suíte: estado original de ${REPO_ROOT}/os-release preservado intacto (override preexistente mantido)"
+    else
+        fail "Suíte: conteúdo de ${REPO_ROOT}/os-release foi alterado indevidamente"
+    fi
+else
+    if [[ ! -e "${REPO_ROOT}/os-release" ]]; then
+        pass "Suíte: estado original de ${REPO_ROOT}/os-release preservado intacto (permaneceu ausente)"
+    else
+        fail "Suíte: arquivo ${REPO_ROOT}/os-release foi criado indevidamente na raiz real do repositório"
+    fi
+fi
+
+# 9.7 Interactive: default answer is No; only y/Y proceeds
+gdir_i="$(mktemp -d "$TEST_ROOT/distro-guard-i.XXXXXX")"
+printf 'ID=fedora\nID_LIKE=\n' > "$gdir_i/os-release"
+for answer in "" "n" "y"; do
+    rc=0
+    printf '%s\n' "$answer" | REPO_ROOT="$gdir_i" OS_RELEASE_FILE="$gdir_i/os-release" SUBCMD_NAME=install bash -c '
+        source "'"${REPO_ROOT}"'/sdata/lib/environment-variables.sh"
+        source "'"${REPO_ROOT}"'/sdata/lib/dist-determine.sh"
+        print_os_group_id_hybrid_unsupported
+    ' >/dev/null 2>&1 || rc=$?
+    if [[ "$answer" == "y" ]]; then
+        assert_eq "$rc" "0" "Distro: resposta interativa 'y' prossegue"
+    else
+        assert_eq "$rc" "1" "Distro: resposta interativa '${answer:-<Enter>}' aborta (padrão = Não)"
+    fi
+done
+
+# 9.8 Arch with --via-nix is also flagged as unsupported
+rc=0; out="$(run_distro_guard arch "" install ask=false INSTALL_VIA_NIX=true)" || rc=$?
+if [[ $rc -eq 1 && "$out" == *"UNSUPPORTED"* ]]; then
+    pass "Distro: --via-nix em Arch também é tratado como caminho não suportado"
+else
+    fail "Distro: --via-nix em Arch não foi sinalizado" "rc=$rc"
+fi
+
+# 9.9 Upstream community dist-* implementations are preserved (not deleted)
+for d in dist-fedora dist-gentoo dist-nix dist-arch; do
+    assert_file_exists "${REPO_ROOT}/sdata/${d}/install-deps.sh" "Distro: implementação herdada sdata/${d} preservada"
+done
 
 printf "\n=============================================================================\n"
 printf "Resumo dos Testes: ${CLR_GREEN}%d aprovados${CLR_RST}, ${CLR_RED}%d falharam${CLR_RST} (total: %d)\n" \
