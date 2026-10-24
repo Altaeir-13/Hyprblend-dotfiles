@@ -85,8 +85,8 @@ done
 eval set -- "$para"
 while true ; do
   case "$1" in
-    ## Clean build cache (after DRY_RUN is parsed in Phase 1)
-    -c|--clean) cleancache;shift;;
+    ## Clean build cache (deferred until after distro authorization guard)
+    -c|--clean) CLEAN_CACHE=true;shift;;
     ## Ones without parameter
     -f|--force) ask=false;shift;;
     -F|--firstrun) INSTALL_FIRSTRUN=true;shift;;

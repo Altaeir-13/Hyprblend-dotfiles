@@ -67,7 +67,7 @@ eval set -- "$para"
 while true ; do
   case "$1" in
     ## Ones without parameter
-    -f|--force) FORCE_CHECK=true;shift
+    -f|--force) FORCE_CHECK=true;ask=false;shift
       log_info "Force check mode enabled - will check all files regardless of git changes"
       ;;
     -p|--packages) CHECK_PACKAGES=true;shift
@@ -82,7 +82,7 @@ while true ; do
     -s|--skip-notice) SKIP_NOTICE=true;shift
       log_warning "Skipping notice about script being untested"
       ;;
-    --non-interactive) NON_INTERACTIVE=true;shift
+    --non-interactive) NON_INTERACTIVE=true;ask=false;shift
       log_info "Non-interactive mode enabled"
       ;;
     --default-choice)

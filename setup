@@ -65,12 +65,23 @@ esac
 if [[ -f "${SUBCMD_DIR}/options.sh" ]];
   then source "${SUBCMD_DIR}/options.sh"
 fi
+
+# Hyprland Hybrid Rice: distribution verification and consent guard
+# Protects all subcommands modifying system packages, permissions, configs, dotfiles, or state
 case ${SUBCMD_NAME} in
-  install)
+  install|install-deps|install-setups|install-files|uninstall|exp-update|exp-merge|resetfirstrun)
     for function in ${print_os_group_id_functions[@]}; do
       $function
     done
     pause
+    if [[ "${CLEAN_CACHE:-false}" == "true" ]]; then
+      cleancache
+    fi
+    ;;
+esac
+
+case ${SUBCMD_NAME} in
+  install)
     init_install_log
     check_install_prerequisites
     load_install_profile "${INSTALL_PROFILE}"
@@ -93,10 +104,6 @@ case ${SUBCMD_NAME} in
     fi
     ;;
   install-deps)
-    for function in ${print_os_group_id_functions[@]}; do
-      $function
-    done
-    pause
     init_install_log
     check_install_prerequisites
     load_install_profile "${INSTALL_PROFILE}"
@@ -109,10 +116,6 @@ case ${SUBCMD_NAME} in
     fi
     ;;
   install-setups)
-    for function in ${print_os_group_id_functions[@]}; do
-      $function
-    done
-    pause
     init_install_log
     check_install_prerequisites
     load_install_profile "${INSTALL_PROFILE}"
@@ -125,10 +128,6 @@ case ${SUBCMD_NAME} in
     fi
     ;;
   install-files)
-    for function in ${print_os_group_id_functions[@]}; do
-      $function
-    done
-    pause
     init_install_log
     check_install_prerequisites
     load_install_profile "${INSTALL_PROFILE}"

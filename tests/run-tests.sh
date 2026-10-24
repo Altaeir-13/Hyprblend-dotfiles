@@ -23,12 +23,17 @@ CLR_RST='\e[0m'
 
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/hybrid-rice-test-suite.XXXXXX")"
 # Ensure test suite operates under a simulated Arch Linux environment on non-Arch hosts (e.g. Ubuntu GitHub Actions runner)
-printf 'ID=arch\nID_LIKE=\n' > "${REPO_ROOT}/os-release"
+# Mock os-release strictly inside TEST_ROOT and export OS_RELEASE_FILE so the repository root is never modified
+MOCK_ARCH_OS_RELEASE="$TEST_ROOT/os-release"
+printf 'ID=arch\nID_LIKE=\n' > "$MOCK_ARCH_OS_RELEASE"
+export OS_RELEASE_FILE="$MOCK_ARCH_OS_RELEASE"
+
 cleanup_suite() {
     chmod -R u+w "$TEST_ROOT" 2>/dev/null || true
     rm -rf "$TEST_ROOT" 2>/dev/null || true
     rm -rf "${REPO_ROOT}/cache/.test_dry_run_sentinel" 2>/dev/null || true
-    rm -f "${REPO_ROOT}/os-release" 2>/dev/null || true
+    rm -rf "${REPO_ROOT}/cache/sentinel_test_clean" 2>/dev/null || true
+    # NOTE: Never touch or remove ${REPO_ROOT}/os-release
 }
 trap cleanup_suite EXIT INT TERM
 
@@ -1122,19 +1127,24 @@ else
     fail "Distro: --dry-run foi abortado ou não exibiu aviso" "rc=$rc"
 fi
 
-# 9.6 Subcomandos modificadores protegidos pela guarda (install-setups, install-files, etc.)
-for subcmd in install-setups install-files exp-update exp-merge uninstall; do
+# 9.6 Subcomandos modificadores protegidos pela guarda (função isolada)
+for subcmd in install-setups install-files exp-update exp-merge uninstall resetfirstrun; do
     rc=0; out="$(run_distro_guard fedora "" "$subcmd" ask=false)" || rc=$?
     assert_eq "$rc" "1" "Distro: '$subcmd -f' bloqueado em distro não suportada sem autorização explícita"
     rc=0; out="$(run_distro_guard fedora "" "$subcmd" ask=false HYBRID_ALLOW_UNSUPPORTED_DISTRO=true)" || rc=$?
     assert_eq "$rc" "0" "Distro: '$subcmd -f' liberado com HYBRID_ALLOW_UNSUPPORTED_DISTRO=true"
 done
 
-# 9.6b Ausência total de efeitos colaterais após recusa (zero logs, zero pacotes, zero arquivos criados)
-for test_subcmd in install install-deps install-setups install-files; do
+# 9.6b Execução end-to-end de ./setup: todos os subcomandos modificadores protegidos e sem efeitos colaterais
+for test_subcmd in install install-deps install-setups install-files uninstall exp-update exp-merge resetfirstrun; do
     sb_guard="$(create_sandbox "guard-side-effects-$test_subcmd")"
-    printf 'ID=fedora
-' > "$sb_guard/os-release"
+    printf 'ID=fedora\n' > "$sb_guard/os-release"
+
+    # For resetfirstrun, seed a firstrun cookie to verify it is NOT deleted upon refusal
+    if [[ "$test_subcmd" == "resetfirstrun" ]]; then
+        mkdir -p "$sb_guard/home/.local/state/dots-hyprland"
+        printf 'FIRSTRUN_TEST_COOKIE\n' > "$sb_guard/home/.local/state/dots-hyprland/firstrun.cookie"
+    fi
 
     guard_exit=0
     (
@@ -1148,27 +1158,115 @@ for test_subcmd in install install-deps install-setups install-files; do
         export PATH="$sb_guard/bin:$PATH"
         export OS_RELEASE_FILE="$sb_guard/os-release"
 
-        # Link os-release so REPO_ROOT/os-release is used
-        cp "$sb_guard/os-release" "${REPO_ROOT}/os-release"
-
         ./setup "$test_subcmd" -f --skip-allgreeting >/dev/null 2>&1
     ) || guard_exit=$?
 
-    rm -f "${REPO_ROOT}/os-release"
+    assert_eq "$guard_exit" "1" "Distro E2E: ./setup $test_subcmd -f em Fedora aborta com código 1 antes de qualquer ação"
 
-    assert_eq "$guard_exit" "1" "Distro: ./setup $test_subcmd -f em Fedora aborta com código 1 antes de qualquer ação"
-
-    # Check that zero files or directories were created inside HOME (no logs, no config files)
-    side_effects_count="$(find "$sb_guard/home" -mindepth 1 2>/dev/null | wc -l)"
-    assert_eq "$side_effects_count" "0" "Distro: zero efeitos colaterais em HOME após recusa em ./setup $test_subcmd (inclusive logs)"
+    if [[ "$test_subcmd" == "resetfirstrun" ]]; then
+        # Check that the firstrun cookie was preserved
+        if [[ -f "$sb_guard/home/.local/state/dots-hyprland/firstrun.cookie" ]]; then
+            pass "Distro E2E: firstrun.cookie permanece intacto após recusa em ./setup resetfirstrun"
+        else
+            fail "Distro E2E: firstrun.cookie foi excluído indevidamente antes do consentimento"
+        fi
+    else
+        # Check that zero files or directories were created inside HOME (no logs, no config files)
+        side_effects_count="$(find "$sb_guard/home" -mindepth 1 2>/dev/null | wc -l)"
+        assert_eq "$side_effects_count" "0" "Distro E2E: zero efeitos colaterais em HOME após recusa em ./setup $test_subcmd (inclusive logs)"
+    fi
 
     # Check that mock pacman in sandbox was NOT called
     if [[ -f "$sb_guard/mock-state/commands.log" ]] && grep -qi "pacman" "$sb_guard/mock-state/commands.log"; then
-        fail "Distro: pacman foi chamado antes da guarda de autorização em ./setup $test_subcmd"
+        fail "Distro E2E: pacman foi chamado antes da guarda de autorização em ./setup $test_subcmd"
     else
-        pass "Distro: nenhuma chamada a gerenciador de pacotes antes da autorização em ./setup $test_subcmd"
+        pass "Distro E2E: nenhuma chamada a gerenciador de pacotes antes da autorização em ./setup $test_subcmd"
     fi
 done
+
+# 9.6c Comandos exclusivamente informativos não sofrem bloqueio da guarda
+for info_cmd in "help" "--help"; do
+    info_exit=0
+    (
+        export OS_RELEASE_FILE="$MOCK_ARCH_OS_RELEASE"
+        ./setup $info_cmd >/dev/null 2>&1
+    ) || info_exit=$?
+    assert_eq "$info_exit" "0" "Informativo: ./setup $info_cmd conclui com código 0"
+done
+
+# 9.6d Regressão: Ausência de side effect de '--clean' antes do consentimento
+mkdir -p "${REPO_ROOT}/cache"
+clean_sentinel="${REPO_ROOT}/cache/sentinel_test_clean"
+printf 'CACHE_PAYLOAD_BEFORE_GUARD\n' > "$clean_sentinel"
+
+sb_clean="$(create_sandbox "guard-clean-test")"
+printf 'ID=fedora\n' > "$sb_clean/os-release"
+
+clean_exit=0
+(
+    export HOME="$sb_clean/home"
+    export PATH="$sb_clean/bin:$PATH"
+    export OS_RELEASE_FILE="$sb_clean/os-release"
+    ./setup install -f --clean --skip-allgreeting >/dev/null 2>&1
+) || clean_exit=$?
+
+assert_eq "$clean_exit" "1" "Distro: ./setup install -f --clean em Fedora aborta com código 1 antes de qualquer ação"
+if [[ -f "$clean_sentinel" ]] && [[ "$(cat "$clean_sentinel")" == "CACHE_PAYLOAD_BEFORE_GUARD" ]]; then
+    pass "Distro: cache preexistente permanece intacto após recusa em ./setup install -f --clean"
+else
+    fail "Distro: cache foi limpo ou modificado antes da guarda de consentimento"
+fi
+rm -f "$clean_sentinel" 2>/dev/null || true
+
+# Testar que --clean funciona normalmente no Arch Linux
+clean_arch_sentinel="${REPO_ROOT}/cache/sentinel_arch_clean"
+printf 'ARCH_CACHE_PAYLOAD\n' > "$clean_arch_sentinel"
+sb_arch_clean="$(create_sandbox "guard-clean-arch-test")"
+printf 'ID=arch\n' > "$sb_arch_clean/os-release"
+(
+    export HOME="$sb_arch_clean/home"
+    export PATH="$sb_arch_clean/bin:$PATH"
+    export OS_RELEASE_FILE="$sb_arch_clean/os-release"
+    ./setup install --clean --dry-run >/dev/null 2>&1
+) || true
+if [[ -f "$clean_arch_sentinel" ]]; then
+    pass "Distro: ./setup install --clean --dry-run preserva cache conforme esperado"
+else
+    fail "Distro: --dry-run removeu o cache indevidamente"
+fi
+rm -f "$clean_arch_sentinel" 2>/dev/null || true
+
+# 9.6e Segurança do arquivo os-release: suíte preserva override preexistente na raiz do repositório
+repo_os_release="${REPO_ROOT}/os-release"
+pre_existed=false
+saved_content=""
+if [[ -f "$repo_os_release" ]]; then
+    pre_existed=true
+    saved_content="$(cat "$repo_os_release")"
+fi
+
+sentinel_os_release="ID=custom_preexisting_override_do_not_delete"
+printf '%s\n' "$sentinel_os_release" > "$repo_os_release"
+
+sb_os_guard="$(create_sandbox "os-release-safety-test")"
+printf 'ID=arch\n' > "$sb_os_guard/os-release"
+(
+    export HOME="$sb_os_guard/home"
+    export OS_RELEASE_FILE="$sb_os_guard/os-release"
+    ./setup install --dry-run >/dev/null 2>&1
+) || true
+
+if [[ -f "$repo_os_release" ]] && [[ "$(cat "$repo_os_release")" == "$sentinel_os_release" ]]; then
+    pass "Suíte: arquivo preexistente ${REPO_ROOT}/os-release é estritamente preservado e não sobrescrito/excluído"
+else
+    fail "Suíte: arquivo ${REPO_ROOT}/os-release foi modificado ou excluído indevidamente"
+fi
+
+if [[ "$pre_existed" == "true" ]]; then
+    printf '%s\n' "$saved_content" > "$repo_os_release"
+else
+    rm -f "$repo_os_release"
+fi
 
 # 9.7 Interactive: default answer is No; only y/Y proceeds
 gdir_i="$(mktemp -d "$TEST_ROOT/distro-guard-i.XXXXXX")"

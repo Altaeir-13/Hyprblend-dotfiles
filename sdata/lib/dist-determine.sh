@@ -94,7 +94,7 @@ function print_os_group_id_hybrid_unsupported(){
 
     # Subcommands that alter system packages, services, permissions or user configs require consent.
     case "${SUBCMD_NAME:-}" in
-        install|install-deps|install-setups|install-files|exp-update|exp-merge|uninstall) ;;
+        install|install-deps|install-setups|install-files|exp-update|exp-merge|uninstall|resetfirstrun) ;;
         *) return 0;;
     esac
     if [[ "${DRY_RUN:-false}" == "true" ]]; then
