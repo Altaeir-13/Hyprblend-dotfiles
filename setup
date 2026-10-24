@@ -67,13 +67,13 @@ if [[ -f "${SUBCMD_DIR}/options.sh" ]];
 fi
 case ${SUBCMD_NAME} in
   install)
-    init_install_log
-    check_install_prerequisites
-    load_install_profile "${INSTALL_PROFILE}"
     for function in ${print_os_group_id_functions[@]}; do
       $function
     done
     pause
+    init_install_log
+    check_install_prerequisites
+    load_install_profile "${INSTALL_PROFILE}"
     # Initialize sudo keepalive for the entire install process
     sudo_init_keepalive
     # Set trap to cleanup when this subcommand exits
@@ -93,13 +93,13 @@ case ${SUBCMD_NAME} in
     fi
     ;;
   install-deps)
-    init_install_log
-    check_install_prerequisites
-    load_install_profile "${INSTALL_PROFILE}"
     for function in ${print_os_group_id_functions[@]}; do
       $function
     done
     pause
+    init_install_log
+    check_install_prerequisites
+    load_install_profile "${INSTALL_PROFILE}"
     # Initialize sudo keepalive for dependency installation
     sudo_init_keepalive
     # Set trap to cleanup when this subcommand exits
@@ -109,13 +109,13 @@ case ${SUBCMD_NAME} in
     fi
     ;;
   install-setups)
-    init_install_log
-    check_install_prerequisites
-    load_install_profile "${INSTALL_PROFILE}"
     for function in ${print_os_group_id_functions[@]}; do
       $function
     done
     pause
+    init_install_log
+    check_install_prerequisites
+    load_install_profile "${INSTALL_PROFILE}"
     # Initialize sudo keepalive for setup steps
     sudo_init_keepalive
     # Set trap to cleanup when this subcommand exits
@@ -125,13 +125,13 @@ case ${SUBCMD_NAME} in
     fi
     ;;
   install-files)
-    init_install_log
-    check_install_prerequisites
-    load_install_profile "${INSTALL_PROFILE}"
     for function in ${print_os_group_id_functions[@]}; do
       $function
     done
     pause
+    init_install_log
+    check_install_prerequisites
+    load_install_profile "${INSTALL_PROFILE}"
     if [[ "${SKIP_ALLFILES}" != true ]]; then
       source ${SUBCMD_DIR}/3.files.sh
     fi

@@ -73,8 +73,10 @@ A alternância entre as duas interfaces ocorre em **tempo de execução com um �
 
 - **Arch Linux:** **Oficialmente suportado e homologado.** O instalador resolve automaticamente metapacotes PKGBUILD, dependências oficiais e pacotes do AUR via `yay-bin`.
 - **Outras Distribuições (sem suporte oficial):** o código herdado do upstream `end-4/dots-hyprland` para **Fedora** (`sdata/dist-fedora`), **Gentoo** (`sdata/dist-gentoo`) e **Nix / `--via-nix`** (`sdata/dist-nix`, também usado como fallback para Debian, openSUSE e distribuições não reconhecidas) **continua presente no repositório e não foi removido**, em respeito ao projeto original. Porém, **essas implementações não possuem suporte oficial no Hybrid Rice e não foram validadas com a integração Caelestia** (plugin `Caelestia`, `libcava`, `qt6-m3shapes`, `ui-switch.sh`, pontes de cores). Elas só instalam as dependências do end-4; o frontend Caelestia pode ficar incompleto ou não funcionar.
-  - **O que o instalador faz fora do Arch:** exibe um aviso vermelho de distribuição não suportada **antes de qualquer alteração no sistema**. Em `./setup install` e `./setup install-deps`, a execução só continua após confirmação interativa explícita (`[y/N]`, padrão **Não**). Em modo não interativo (`-f` / `--force`), o instalador **aborta sem alterar nada**, a menos que você defina `HYBRID_ALLOW_UNSUPPORTED_DISTRO=true`.
-  - `--dry-run` apenas exibe o aviso, sem abortar. `./setup install-files` (somente cópia de configurações) exibe o aviso sem bloquear.
+  - **O que o instalador faz fora do Arch:** exibe um aviso vermelho de distribuição não suportada **antes de qualquer alteração no sistema, antes da criação de arquivos de log e antes de qualquer chamada ao gerenciador de pacotes**.
+  - **Subcomandos que modificam o sistema ou o ambiente do usuário:** `./setup install`, `./setup install-deps`, `./setup install-setups`, `./setup install-files` (que executa sincronizações com `rsync --delete` em pastas gerenciadas), `./setup exp-update`, `./setup exp-merge` e `./setup uninstall` exigem confirmação interativa explícita (`[y/N]`, padrão **Não**).
+  - Em modo não interativo (`-f` / `--force`), o instalador **aborta imediatamente sem efeitos colaterais** (zero arquivos criados ou modificados, inclusive logs), a menos que a autorização explícita seja fornecida via variável de ambiente: `HYBRID_ALLOW_UNSUPPORTED_DISTRO=true`.
+  - Simulações com `--dry-run` e subcomandos puramente informativos (como `help`, `checkdeps`) exibem o aviso sem abortar.
   - Para prosseguir por sua conta e risco (não recomendado): `HYBRID_ALLOW_UNSUPPORTED_DISTRO=true ./setup install --profile minimal -f`.
 
 ---
@@ -246,13 +248,13 @@ Caso uma transição trave ou uma customização impeça o carregamento da inter
 
 Este projeto respeita e preserva integralmente os direitos dos autores originais:
 
-- **Base do Sistema e Frontend `ii` / `waffle`:**  
-  Desenvolvido por **[end-4](https://github.com/end-4)** sob a licença **GNU GPLv3**.  
+- **Base do Sistema e Frontend `ii` / `waffle`:**
+  Desenvolvido por **[end-4](https://github.com/end-4)** sob a licença **GNU GPLv3**.
   Consulte [`LICENSE`](./LICENSE) para o texto completo da licença.
-- **Frontend Caelestia Hybrid e Plugin C++:**  
-  Desenvolvido pela equipe **[Caelestia Dots](https://github.com/caelestia-dots/shell)** sob a licença **GNU GPLv3**.  
+- **Frontend Caelestia Hybrid e Plugin C++:**
+  Desenvolvido pela equipe **[Caelestia Dots](https://github.com/caelestia-dots/shell)** sob a licença **GNU GPLv3**.
   Código do plugin compilado e integrado a partir da revisão upstream fixada `454f46da`.
-- **Camada de Integração Híbrida (`ui-switch.sh`, `rice-lock`, bridges de cores e vídeo):**  
+- **Camada de Integração Híbrida (`ui-switch.sh`, `rice-lock`, bridges de cores e vídeo):**
   Licenciada sob a licença **GNU GPLv3**.
 - **Tipografia e Fontes:**
   - *Google Sans Flex*: Open Font License (OFL).

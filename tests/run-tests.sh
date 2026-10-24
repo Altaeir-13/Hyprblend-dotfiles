@@ -1098,13 +1098,53 @@ else
     fail "Distro: --dry-run foi abortado ou não exibiu aviso" "rc=$rc"
 fi
 
-# 9.6 install-files only copies configs: warns but does not block
-rc=0; out="$(run_distro_guard fedora "" install-files ask=false)" || rc=$?
-if [[ $rc -eq 0 && "$out" == *"UNSUPPORTED"* ]]; then
-    pass "Distro: install-files (somente cópia de configs) exibe o aviso sem bloquear"
-else
-    fail "Distro: install-files foi bloqueado ou não exibiu aviso" "rc=$rc"
-fi
+# 9.6 Subcomandos modificadores protegidos pela guarda (install-setups, install-files, etc.)
+for subcmd in install-setups install-files exp-update exp-merge uninstall; do
+    rc=0; out="$(run_distro_guard fedora "" "$subcmd" ask=false)" || rc=$?
+    assert_eq "$rc" "1" "Distro: '$subcmd -f' bloqueado em distro não suportada sem autorização explícita"
+    rc=0; out="$(run_distro_guard fedora "" "$subcmd" ask=false HYBRID_ALLOW_UNSUPPORTED_DISTRO=true)" || rc=$?
+    assert_eq "$rc" "0" "Distro: '$subcmd -f' liberado com HYBRID_ALLOW_UNSUPPORTED_DISTRO=true"
+done
+
+# 9.6b Ausência total de efeitos colaterais após recusa (zero logs, zero pacotes, zero arquivos criados)
+for test_subcmd in install install-deps install-setups install-files; do
+    sb_guard="$(create_sandbox "guard-side-effects-$test_subcmd")"
+    printf 'ID=fedora
+' > "$sb_guard/os-release"
+
+    guard_exit=0
+    (
+        export HOME="$sb_guard/home"
+        export XDG_CONFIG_HOME="$sb_guard/home/.config"
+        export XDG_DATA_HOME="$sb_guard/home/.local/share"
+        export XDG_STATE_HOME="$sb_guard/home/.local/state"
+        export XDG_CACHE_HOME="$sb_guard/home/.cache"
+        export XDG_BIN_HOME="$sb_guard/home/.local/bin"
+        export REPO_ROOT="${REPO_ROOT}"
+        export PATH="$sb_guard/bin:$PATH"
+        export OS_RELEASE_FILE="$sb_guard/os-release"
+
+        # Link os-release so REPO_ROOT/os-release is used
+        cp "$sb_guard/os-release" "${REPO_ROOT}/os-release"
+
+        ./setup "$test_subcmd" -f --skip-allgreeting >/dev/null 2>&1
+    ) || guard_exit=$?
+
+    rm -f "${REPO_ROOT}/os-release"
+
+    assert_eq "$guard_exit" "1" "Distro: ./setup $test_subcmd -f em Fedora aborta com código 1 antes de qualquer ação"
+
+    # Check that zero files or directories were created inside HOME (no logs, no config files)
+    side_effects_count="$(find "$sb_guard/home" -mindepth 1 2>/dev/null | wc -l)"
+    assert_eq "$side_effects_count" "0" "Distro: zero efeitos colaterais em HOME após recusa em ./setup $test_subcmd (inclusive logs)"
+
+    # Check that mock pacman in sandbox was NOT called
+    if [[ -f "$sb_guard/mock-state/commands.log" ]] && grep -qi "pacman" "$sb_guard/mock-state/commands.log"; then
+        fail "Distro: pacman foi chamado antes da guarda de autorização em ./setup $test_subcmd"
+    else
+        pass "Distro: nenhuma chamada a gerenciador de pacotes antes da autorização em ./setup $test_subcmd"
+    fi
+done
 
 # 9.7 Interactive: default answer is No; only y/Y proceeds
 gdir_i="$(mktemp -d "$TEST_ROOT/distro-guard-i.XXXXXX")"
