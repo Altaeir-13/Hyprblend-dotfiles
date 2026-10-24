@@ -39,10 +39,20 @@ function auto_backup_configs(){
       ;;
   esac
   if $backup;then
-    if [[ -d "$effective_backup_dir" ]]; then
-      effective_backup_dir="${BACKUP_DIR}-$(date +%Y%m%d-%H%M%S)"
+    if [[ -e "$effective_backup_dir" || -L "$effective_backup_dir" ]]; then
+      local base_backup="${BACKUP_DIR}-$(date +%Y%m%d-%H%M%S)"
+      effective_backup_dir="$base_backup"
+      local count=1
+      while [[ -e "$effective_backup_dir" || -L "$effective_backup_dir" ]]; do
+        effective_backup_dir="${base_backup}-${count}"
+        (( count++ ))
+      done
     fi
+    mkdir -p "$effective_backup_dir"
     export ACTIVE_BACKUP_DIR="$effective_backup_dir"
+    mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/illogical-impulse" 2>/dev/null || true
+    printf '%s\n' "$effective_backup_dir" > "${XDG_STATE_HOME:-$HOME/.local/state}/illogical-impulse/latest_backup_dir" 2>/dev/null || true
+    log_event "Backup directory initialized: ${effective_backup_dir}"
     backup_clashing_targets dots/.config $XDG_CONFIG_HOME "${effective_backup_dir}/.config"
     backup_clashing_targets dots/.local/share $XDG_DATA_HOME "${effective_backup_dir}/.local/share"
     backup_clashing_targets dots/.local/bin $XDG_BIN_HOME "${effective_backup_dir}/.local/bin"
@@ -123,7 +133,13 @@ rsync_dir__sync(){
 
   local backup_dest_root="${ACTIVE_BACKUP_DIR:-${BACKUP_DIR}}"
   if [[ ! -d "$backup_dest_root" ]]; then
-    backup_dest_root="${BACKUP_DIR}-sync-backup-$(date +%Y%m%d-%H%M%S)"
+    local base_sync_backup="${BACKUP_DIR}-sync-backup-$(date +%Y%m%d-%H%M%S)"
+    backup_dest_root="$base_sync_backup"
+    local count=1
+    while [[ -e "$backup_dest_root" || -L "$backup_dest_root" ]]; do
+      backup_dest_root="${base_sync_backup}-${count}"
+      (( count++ ))
+    done
     mkdir -p "$backup_dest_root"
   fi
   local component_name="$(basename "$dest_dir")"
@@ -134,6 +150,7 @@ rsync_dir__sync(){
 
   if [[ -d "$sync_backup_dir" && -n "$(ls -A "$sync_backup_dir" 2>/dev/null)" ]]; then
     echo -e "${STY_YELLOW}[$0]: NOTICE: Unmanaged/modified files in '$dest_dir' were safely backed up to '${sync_backup_dir}' before synchronization.${STY_RST}"
+    log_event "Sync backup saved: component=${component_name} dir=${sync_backup_dir}"
   else
     rmdir "$sync_backup_dir" 2>/dev/null || true
   fi
@@ -159,7 +176,13 @@ rsync_dir__sync_exclude(){
 
   local backup_dest_root="${ACTIVE_BACKUP_DIR:-${BACKUP_DIR}}"
   if [[ ! -d "$backup_dest_root" ]]; then
-    backup_dest_root="${BACKUP_DIR}-sync-backup-$(date +%Y%m%d-%H%M%S)"
+    local base_sync_backup="${BACKUP_DIR}-sync-backup-$(date +%Y%m%d-%H%M%S)"
+    backup_dest_root="$base_sync_backup"
+    local count=1
+    while [[ -e "$backup_dest_root" || -L "$backup_dest_root" ]]; do
+      backup_dest_root="${base_sync_backup}-${count}"
+      (( count++ ))
+    done
     mkdir -p "$backup_dest_root"
   fi
   local component_name="$(basename "$dest_dir")"
@@ -170,6 +193,7 @@ rsync_dir__sync_exclude(){
 
   if [[ -d "$sync_backup_dir" && -n "$(ls -A "$sync_backup_dir" 2>/dev/null)" ]]; then
     echo -e "${STY_YELLOW}[$0]: NOTICE: Unmanaged/modified files in '$dest_dir' were backed up to '${sync_backup_dir}' before synchronization.${STY_RST}"
+    log_event "Sync backup saved: component=${component_name} dir=${sync_backup_dir}"
   else
     rmdir "$sync_backup_dir" 2>/dev/null || true
   fi

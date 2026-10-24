@@ -15,8 +15,9 @@ Options for install:
       --log-file <path>     Write installation log to <path>
       --skip-caelestia      Skip installing Caelestia Hybrid frontend and plugin
   -f, --force               Force non-interactive mode. Suppresses command confirmations,
-                            but NEVER deletes unmanaged user files or bypasses pacman
-                            dependency checks (destructive 'pacman -Rdd' is forbidden).
+                            but NEVER deletes unmanaged user files or removes packages automatically
+                            (destructive 'pacman -Rdd' is forbidden; deprecated package removal
+                            requires explicit authorization via ALLOW_REMOVE_DEPRECATED=true).
   -F, --fisrtrun            Act like it is the first run
   -c, --clean               Clean the build cache first
       --skip-allgreeting    Skip the whole process greeting

@@ -128,7 +128,7 @@ O perfil híbrido compila e instala dependências oficiais e componentes do Arch
   Indicado exclusivamente para testes, integração contínua (CI) e instalações não-assistidas em ambientes descartáveis ou VMs limpas. Neste modo, `--noconfirm` é propagado para `pacman` e `yay` aceitando seleções automáticas.
 
 > [!WARNING]
-> O uso de `-f` / `--force` suprime confirmações de pacotes de software, mas **nunca autoriza a exclusão silenciosa** de dados pessoais ou diretórios desconhecidos.
+> O uso de `-f` / `--force` suprime confirmações de instalação, mas **nunca remove pacotes do usuário nem autoriza a exclusão silenciosa** de dados pessoais ou diretórios desconhecidos. A remoção de pacotes legados/obsoletos só ocorre sob autorização explícita com a variável `ALLOW_REMOVE_DEPRECATED=true` (ou via confirmação `[y/N]` no modo interativo).
 
 ### Proteção de Submódulos e Arquivos Pessoais
 Caso o caminho de um submódulo Git (como `shapes`) já contenha arquivos preexistentes do usuário ou alterações não gerenciadas:

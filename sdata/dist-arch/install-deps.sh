@@ -60,9 +60,16 @@ remove_deprecated_dependencies(){
       *) echo -e "${STY_BLUE}[$0]: Skipping removal of deprecated packages.${STY_RST}" ;;
     esac
   else
-    # Force/unattended mode: attempt safe removal without bypassing dependency checks
-    echo -e "${STY_YELLOW}[$0]: Non-interactive mode: Attempting safe removal with standard dependency verification...${STY_RST}"
-    do_remove=true
+    # In non-interactive / unattended mode (--force), user packages are NEVER automatically removed
+    # without explicit authorization policy via ALLOW_REMOVE_DEPRECATED=true.
+    if [[ "${ALLOW_REMOVE_DEPRECATED:-false}" == "true" ]]; then
+      echo -e "${STY_YELLOW}[$0]: Non-interactive mode (ALLOW_REMOVE_DEPRECATED=true): Attempting safe removal with standard dependency verification...${STY_RST}"
+      do_remove=true
+    else
+      echo -e "${STY_YELLOW}[$0]: Non-interactive mode: Preserving user packages. Deprecated package removal skipped.${STY_RST}"
+      echo -e "${STY_YELLOW}      To authorize removal of deprecated packages in unattended mode, run with ALLOW_REMOVE_DEPRECATED=true.${STY_RST}"
+      do_remove=false
+    fi
   fi
 
   if [[ "$do_remove" == true ]]; then

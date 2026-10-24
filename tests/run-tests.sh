@@ -446,7 +446,8 @@ echo "user_custom_widget" > "$sb_hyb/home/.config/quickshell/ii/my_custom_widget
 echo "user_custom_module" > "$sb_hyb/home/.config/quickshell/caelestia-hybrid/my_custom_module.qml"
 echo "user_custom_rule" > "$sb_hyb/home/.config/hypr/hyprland/my_extra.conf"
 
-PATH="$sb_hyb/bin:$PATH" \
+# Run setup and deterministically locate the exact backup directory created
+setup_out="$(PATH="$sb_hyb/bin:$PATH" \
 MOCK_STATE_DIR="$sb_hyb/mock-state" \
 HOME="$sb_hyb/home" \
 XDG_CONFIG_HOME="$sb_hyb/home/.config" \
@@ -455,14 +456,22 @@ XDG_STATE_HOME="$sb_hyb/home/.local/state" \
 XDG_CACHE_HOME="$sb_hyb/home/.cache" \
 XDG_BIN_HOME="$sb_hyb/home/.local/bin" \
 BACKUP_DIR="$sb_hyb/home/ii-original-dots-backup" \
-./setup install-files -p hybrid -f >/dev/null
+./setup install-files -p hybrid -f)"
 
-sync_bk="$(find "$sb_hyb/home" -maxdepth 2 -type d -name "ii-original-dots-backup*" | grep -v "^$sb_hyb/home/ii-original-dots-backup$" | head -n 1)"
-[[ -z "$sync_bk" ]] && sync_bk="$sb_hyb/home/ii-original-dots-backup"
+sync_bk="$(cat "$sb_hyb/home/.local/state/illogical-impulse/latest_backup_dir" 2>/dev/null || true)"
+if [[ -z "$sync_bk" || ! -d "$sync_bk" ]]; then
+    sync_bk="$(printf '%s\n' "$setup_out" | grep -o 'Backup into "[^"]*"' | sed 's/Backup into "//;s/"//' | tail -n 1)"
+fi
+if [[ -z "$sync_bk" || ! -d "$sync_bk" ]]; then
+    sync_bk="$(find "$sb_hyb/home" -type d -path "*/sync-deleted/ii" 2>/dev/null | sed 's|/sync-deleted/ii||' | head -n 1)"
+fi
 
 assert_file_exists "$sync_bk/sync-deleted/ii/my_custom_widget.qml" "Reexecução: arquivo personalizado em quickshell/ii é salvo em backup antes do sync"
+assert_eq "$(cat "$sync_bk/sync-deleted/ii/my_custom_widget.qml")" "user_custom_widget" "Reexecução: integridade de my_custom_widget.qml preservada"
 assert_file_exists "$sync_bk/sync-deleted/caelestia-hybrid/my_custom_module.qml" "Reexecução: arquivo personalizado em quickshell/caelestia-hybrid é salvo em backup antes do sync"
+assert_eq "$(cat "$sync_bk/sync-deleted/caelestia-hybrid/my_custom_module.qml")" "user_custom_module" "Reexecução: integridade de my_custom_module.qml preservada"
 assert_file_exists "$sync_bk/sync-deleted/hyprland/my_extra.conf" "Reexecução: arquivo personalizado em hypr/hyprland é salvo em backup antes do sync"
+assert_eq "$(cat "$sync_bk/sync-deleted/hyprland/my_extra.conf")" "user_custom_rule" "Reexecução: integridade de my_extra.conf preservada"
 assert_file_exists "$sb_hyb/home/.local/bin/ui-switch.sh" "Script ui-switch.sh instalado em XDG_BIN_HOME (~/.local/bin)"
 
 printf "\n${CLR_CYAN}=== 4. Testes de Transição entre Perfis (minimal <-> hybrid) e Paridade Legacy vs Exp ===${CLR_RST}\n"
@@ -947,6 +956,94 @@ fi
     remove_deprecated_dependencies >/dev/null 2>&1 || exit 2
 ) && pass "Auditoria de pacotes: eliminação estrita de 'pacman -Rdd' e remoção segura com verificação" \
   || fail "Auditoria de pacotes: pacman -Rdd ainda presente ou falha em remove_deprecated_dependencies"
+
+# Test 8.11: Auditoria de política de autorização de remoção de pacotes (--force)
+(
+    export DRY_RUN=false
+    source "${REPO_ROOT}/sdata/lib/environment-variables.sh"
+    source "${REPO_ROOT}/sdata/lib/functions.sh"
+    eval "$(sed -n '/^remove_deprecated_dependencies(){/,/^}/p' "${REPO_ROOT}/sdata/dist-arch/install-deps.sh")"
+
+    # Mock pacman to simulate one legacy package is found
+    pacman() {
+        if [[ "$1" == "-Qq" && "$2" == "matugen-bin" ]]; then return 0; fi
+        return 1
+    }
+
+    # Case A: non-interactive (--force) without ALLOW_REMOVE_DEPRECATED must NOT remove
+    export ask=false
+    export ALLOW_REMOVE_DEPRECATED=false
+    sudo() {
+        echo "ERROR: sudo called in unattended mode without authorization" >&2
+        return 1
+    }
+    remove_deprecated_dependencies >/dev/null 2>&1 || exit 1
+
+    # Case B: non-interactive with ALLOW_REMOVE_DEPRECATED=true authorizes safe removal
+    authorized_removal=false
+    sudo() {
+        if [[ "$1" == "pacman" && "$2" == "-R" && "$3" == "--noconfirm" ]]; then
+            authorized_removal=true
+            return 0
+        fi
+        return 1
+    }
+    export ALLOW_REMOVE_DEPRECATED=true
+    remove_deprecated_dependencies >/dev/null 2>&1 || exit 2
+    [[ "$authorized_removal" == true ]] || exit 3
+) && pass "Política de pacotes: modo --force preserva pacotes sem remoção desautorizada" \
+  || fail "Política de pacotes: modo --force removeu pacotes sem autorização explícita"
+
+# Test 8.12: Unicidade de diretórios de backup em reexecuções rápidas e zero sobrescrita
+(
+    sb_coll="$(create_sandbox "backup-collision-test")"
+    export HOME="$sb_coll/home"
+    export XDG_CONFIG_HOME="$sb_coll/home/.config"
+    export XDG_DATA_HOME="$sb_coll/home/.local/share"
+    export XDG_STATE_HOME="$sb_coll/home/.local/state"
+    export XDG_BIN_HOME="$sb_coll/home/.local/bin"
+    export BACKUP_DIR="$sb_coll/home/ii-original-dots-backup"
+    export ask=false
+
+    source "${REPO_ROOT}/sdata/lib/environment-variables.sh"
+    source "${REPO_ROOT}/sdata/lib/functions.sh"
+    eval "$(sed -n '/^function auto_backup_configs(){/,/^}/p' "${REPO_ROOT}/sdata/subcmd-install/3.files.sh")"
+
+    # Execution 1: initial backup
+    auto_backup_configs >/dev/null 2>&1
+    d1="$ACTIVE_BACKUP_DIR"
+    [[ "$d1" == "$BACKUP_DIR" ]] || exit 1
+    echo "content_run1" > "$d1/run1.txt"
+
+    # Execution 2: immediate execution (simulating same second)
+    auto_backup_configs >/dev/null 2>&1
+    d2="$ACTIVE_BACKUP_DIR"
+    [[ "$d2" != "$d1" ]] || exit 2
+    echo "content_run2" > "$d2/run2.txt"
+
+    # Execution 3: another immediate execution in same second
+    auto_backup_configs >/dev/null 2>&1
+    d3="$ACTIVE_BACKUP_DIR"
+    [[ "$d3" != "$d1" && "$d3" != "$d2" ]] || exit 3
+    echo "content_run3" > "$d3/run3.txt"
+
+    # Execution 4: fourth immediate execution in same second
+    auto_backup_configs >/dev/null 2>&1
+    d4="$ACTIVE_BACKUP_DIR"
+    [[ "$d4" != "$d1" && "$d4" != "$d2" && "$d4" != "$d3" ]] || exit 4
+    echo "content_run4" > "$d4/run4.txt"
+
+    # Verify that all 4 directories are unique and prior files are never overwritten
+    [[ "$(cat "$d1/run1.txt")" == "content_run1" ]] || exit 5
+    [[ "$(cat "$d2/run2.txt")" == "content_run2" ]] || exit 6
+    [[ "$(cat "$d3/run3.txt")" == "content_run3" ]] || exit 7
+    [[ "$(cat "$d4/run4.txt")" == "content_run4" ]] || exit 8
+
+    # Verify latest_backup_dir correctly points to the newest backup
+    latest_rec="$(cat "$sb_coll/home/.local/state/illogical-impulse/latest_backup_dir")"
+    [[ "$latest_rec" == "$d4" ]] || exit 9
+) && pass "Backups: unicidade garantida em reexecuções rápidas e zero sobrescrita em colisões de timestamp" \
+  || fail "Backups: falha na resolução de colisão de timestamp ou sobrescrita de backup anterior"
 
 printf "\n=============================================================================\n"
 printf "Resumo dos Testes: ${CLR_GREEN}%d aprovados${CLR_RST}, ${CLR_RED}%d falharam${CLR_RST} (total: %d)\n" \
