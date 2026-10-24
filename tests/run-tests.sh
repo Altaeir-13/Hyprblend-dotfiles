@@ -28,6 +28,14 @@ MOCK_ARCH_OS_RELEASE="$TEST_ROOT/os-release"
 printf 'ID=arch\nID_LIKE=\n' > "$MOCK_ARCH_OS_RELEASE"
 export OS_RELEASE_FILE="$MOCK_ARCH_OS_RELEASE"
 
+# Capture initial state of ${REPO_ROOT}/os-release to verify it is never mutated or removed
+INITIAL_REPO_OS_RELEASE_EXISTS=false
+INITIAL_REPO_OS_RELEASE_SHA=""
+if [[ -f "${REPO_ROOT}/os-release" ]]; then
+    INITIAL_REPO_OS_RELEASE_EXISTS=true
+    INITIAL_REPO_OS_RELEASE_SHA="$(sha256sum "${REPO_ROOT}/os-release" 2>/dev/null || true)"
+fi
+
 cleanup_suite() {
     chmod -R u+w "$TEST_ROOT" 2>/dev/null || true
     rm -rf "$TEST_ROOT" 2>/dev/null || true
@@ -1268,30 +1276,58 @@ else
     fail "Distro: --dry-run removeu o cache indevidamente"
 fi
 
-# 9.6e Segurança do arquivo os-release: suíte preserva override preexistente em repositório temporário isolado
-iso_os="$(create_isolated_repo "os-release-isolated-repo")"
-sentinel_os_release="ID=custom_isolated_override_do_not_delete"
-printf '%s\n' "$sentinel_os_release" > "$iso_os/os-release"
+# 9.6e Segurança do arquivo os-release: suíte preserva override preexistente e ausência sem modificar a raiz real
+# Cenário 1: Repositório com arquivo os-release preexistente (override local legítimo)
+iso_os_present="$(create_isolated_repo "os-release-isolated-present")"
+sentinel_os_release="ID=custom_local_override_do_not_delete"
+printf '%s\n' "$sentinel_os_release" > "$iso_os_present/os-release"
+sentinel_sha="$(sha256sum "$iso_os_present/os-release")"
 
-sb_os_guard="$(create_sandbox "os-release-safety-test")"
-printf 'ID=arch\n' > "$sb_os_guard/os-release"
+sb_os_present="$(create_sandbox "os-release-present-test")"
+printf 'ID=arch\n' > "$sb_os_present/os-release"
 (
-    export HOME="$sb_os_guard/home"
-    export OS_RELEASE_FILE="$sb_os_guard/os-release"
-    "$iso_os/setup" install --dry-run >/dev/null 2>&1
+    export HOME="$sb_os_present/home"
+    export OS_RELEASE_FILE="$sb_os_present/os-release"
+    "$iso_os_present/setup" install --dry-run >/dev/null 2>&1
 ) || true
 
-if [[ -f "$iso_os/os-release" ]] && [[ "$(cat "$iso_os/os-release")" == "$sentinel_os_release" ]]; then
-    pass "Suíte: arquivo preexistente os-release em repo isolado é estritamente preservado e não sobrescrito/excluído"
+current_present_sha="$(sha256sum "$iso_os_present/os-release" 2>/dev/null || true)"
+if [[ -f "$iso_os_present/os-release" ]] && [[ "$current_present_sha" == "$sentinel_sha" ]]; then
+    pass "Suíte isolada (cenário preexistente): os-release é estritamente preservado com conteúdo inalterado"
 else
-    fail "Suíte: arquivo os-release em repo isolado foi modificado ou excluído indevidamente"
+    fail "Suíte isolada (cenário preexistente): os-release foi modificado ou excluído indevidamente"
 fi
 
-# Garantir que a raiz de trabalho real nunca teve os-release criado ou modificado
-if [[ ! -e "${REPO_ROOT}/os-release" ]]; then
-    pass "Suíte: raiz de trabalho ${REPO_ROOT}/os-release permanece 100% intocada e inexistente"
+# Cenário 2: Repositório sem arquivo os-release preexistente (ausente)
+iso_os_absent="$(create_isolated_repo "os-release-isolated-absent")"
+sb_os_absent="$(create_sandbox "os-release-absent-test")"
+printf 'ID=arch\n' > "$sb_os_absent/os-release"
+(
+    export HOME="$sb_os_absent/home"
+    export OS_RELEASE_FILE="$sb_os_absent/os-release"
+    "$iso_os_absent/setup" install --dry-run >/dev/null 2>&1
+) || true
+
+if [[ ! -e "$iso_os_absent/os-release" ]]; then
+    pass "Suíte isolada (cenário ausente): nenhum arquivo os-release espúrio é criado no repositório"
 else
-    fail "Suíte: arquivo os-release encontrado indevidamente na raiz real do repositório"
+    fail "Suíte isolada (cenário ausente): arquivo os-release foi criado indevidamente no repositório"
+fi
+
+# Verificação da raiz de trabalho real: comprovar que o estado original permanece intacto (presente ou ausente)
+if [[ "$INITIAL_REPO_OS_RELEASE_EXISTS" == "true" ]]; then
+    current_repo_sha="$(sha256sum "${REPO_ROOT}/os-release" 2>/dev/null || true)"
+    if [[ "$current_repo_sha" == "$INITIAL_REPO_OS_RELEASE_SHA" ]]; then
+        pass "Suíte: estado original de ${REPO_ROOT}/os-release preservado intacto (override preexistente mantido)"
+    else
+        fail "Suíte: conteúdo de ${REPO_ROOT}/os-release foi alterado indevidamente"
+    fi
+else
+    if [[ ! -e "${REPO_ROOT}/os-release" ]]; then
+        pass "Suíte: estado original de ${REPO_ROOT}/os-release preservado intacto (permaneceu ausente)"
+    else
+        fail "Suíte: arquivo ${REPO_ROOT}/os-release foi criado indevidamente na raiz real do repositório"
+    fi
 fi
 
 # 9.7 Interactive: default answer is No; only y/Y proceeds
