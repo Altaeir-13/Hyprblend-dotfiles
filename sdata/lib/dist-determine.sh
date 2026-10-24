@@ -124,7 +124,7 @@ function print_os_group_id_hybrid_unsupported(){
 # Helpful link(s):
 # http://stackoverflow.com/questions/29581754
 # https://github.com/which-distro/os-release
-OS_RELEASE_FILE_CUSTOM="${REPO_ROOT}/os-release"
+OS_RELEASE_FILE_CUSTOM="${OS_RELEASE_FILE:-${REPO_ROOT}/os-release}"
 if test -f "${OS_RELEASE_FILE_CUSTOM}"; then
   printf "${STY_YELLOW}Warning: using custom os-release file \"${OS_RELEASE_FILE_CUSTOM}\".${STY_RST}\n"
   OS_RELEASE_FILE="${OS_RELEASE_FILE_CUSTOM}"

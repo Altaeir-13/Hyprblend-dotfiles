@@ -22,6 +22,10 @@ CLR_YELLOW='\e[33m'
 CLR_RST='\e[0m'
 
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/hybrid-rice-test-suite.XXXXXX")"
+# Ensure test suite operates under a simulated Arch Linux environment on non-Arch hosts (e.g. Ubuntu GitHub Actions runner)
+TEST_ARCH_OS_RELEASE="$TEST_ROOT/os-release-arch"
+printf 'ID=arch\nID_LIKE=\n' > "$TEST_ARCH_OS_RELEASE"
+export OS_RELEASE_FILE="$TEST_ARCH_OS_RELEASE"
 cleanup_suite() {
     chmod -R u+w "$TEST_ROOT" 2>/dev/null || true
     rm -rf "$TEST_ROOT" 2>/dev/null || true
@@ -1056,7 +1060,7 @@ run_distro_guard() {
     local gdir; gdir="$(mktemp -d "$TEST_ROOT/distro-guard.XXXXXX")"
     printf 'ID=%s\nID_LIKE=%s\n' "$os_id" "$os_like" > "$gdir/os-release"
     (
-        env "$@" REPO_ROOT="$gdir" SUBCMD_NAME="$subcmd" bash -c '
+        env "$@" REPO_ROOT="$gdir" OS_RELEASE_FILE="$gdir/os-release" SUBCMD_NAME="$subcmd" bash -c '
             source "'"${REPO_ROOT}"'/sdata/lib/environment-variables.sh"
             source "'"${REPO_ROOT}"'/sdata/lib/dist-determine.sh"
             print_os_group_id_hybrid_unsupported
@@ -1151,7 +1155,7 @@ gdir_i="$(mktemp -d "$TEST_ROOT/distro-guard-i.XXXXXX")"
 printf 'ID=fedora\nID_LIKE=\n' > "$gdir_i/os-release"
 for answer in "" "n" "y"; do
     rc=0
-    printf '%s\n' "$answer" | REPO_ROOT="$gdir_i" SUBCMD_NAME=install bash -c '
+    printf '%s\n' "$answer" | REPO_ROOT="$gdir_i" OS_RELEASE_FILE="$gdir_i/os-release" SUBCMD_NAME=install bash -c '
         source "'"${REPO_ROOT}"'/sdata/lib/environment-variables.sh"
         source "'"${REPO_ROOT}"'/sdata/lib/dist-determine.sh"
         print_os_group_id_hybrid_unsupported
