@@ -31,9 +31,7 @@ export OS_RELEASE_FILE="$MOCK_ARCH_OS_RELEASE"
 cleanup_suite() {
     chmod -R u+w "$TEST_ROOT" 2>/dev/null || true
     rm -rf "$TEST_ROOT" 2>/dev/null || true
-    rm -rf "${REPO_ROOT}/cache/.test_dry_run_sentinel" 2>/dev/null || true
-    rm -rf "${REPO_ROOT}/cache/sentinel_test_clean" 2>/dev/null || true
-    # NOTE: Never touch or remove ${REPO_ROOT}/os-release
+    # NOTE: Never touch, write to, or remove ${REPO_ROOT}/os-release or ${REPO_ROOT}/cache
 }
 trap cleanup_suite EXIT INT TERM
 
@@ -91,6 +89,20 @@ assert_not_exists() {
     else
         fail "$msg" "path should not exist: $path"
     fi
+}
+
+# -----------------------------------------------------------------------------
+# Helper: Create an isolated repository directory with symlinks to real assets
+# -----------------------------------------------------------------------------
+create_isolated_repo() {
+    local name="$1"
+    local iso="$TEST_ROOT/$name"
+    mkdir -p "$iso"
+    cp "${REPO_ROOT}/setup" "$iso/setup"
+    ln -s "${REPO_ROOT}/sdata" "$iso/sdata"
+    ln -s "${REPO_ROOT}/dots" "$iso/dots"
+    ln -s "${REPO_ROOT}/dots-extra" "$iso/dots-extra"
+    printf '%s\n' "$iso"
 }
 
 # -----------------------------------------------------------------------------
@@ -347,10 +359,11 @@ fi
 
 printf "\n${CLR_CYAN}=== 2. Testes de Segurança do modo --dry-run (Zero Mutação) ===${CLR_RST}\n"
 
-sb_dry="$(create_sandbox "dryrun")"
-mkdir -p "${REPO_ROOT}/cache"
-touch "${REPO_ROOT}/cache/.test_dry_run_sentinel"
+iso_dry="$(create_isolated_repo "dryrun-clean-repo")"
+mkdir -p "$iso_dry/cache"
+touch "$iso_dry/cache/.test_dry_run_sentinel"
 
+sb_dry="$(create_sandbox "dryrun")"
 PATH="$sb_dry/bin:$PATH" \
 MOCK_STATE_DIR="$sb_dry/mock-state" \
 HOME="$sb_dry/home" \
@@ -359,10 +372,9 @@ XDG_DATA_HOME="$sb_dry/home/.local/share" \
 XDG_STATE_HOME="$sb_dry/home/.local/state" \
 XDG_CACHE_HOME="$sb_dry/home/.cache" \
 XDG_BIN_HOME="$sb_dry/home/.local/bin" \
-./setup install --clean --dry-run -p complete --skip-allgreeting >/dev/null
+"$iso_dry/setup" install --clean --dry-run -p complete --skip-allgreeting >/dev/null
 
-assert_file_exists "${REPO_ROOT}/cache/.test_dry_run_sentinel" "--clean --dry-run preserva diretório cache do repositório"
-rm -f "${REPO_ROOT}/cache/.test_dry_run_sentinel"
+assert_file_exists "$iso_dry/cache/.test_dry_run_sentinel" "--clean --dry-run preserva diretório cache do repositório"
 
 dry_files_count="$(find "$sb_dry/home" -mindepth 1 | wc -l)"
 assert_eq "$dry_files_count" "0" "./setup install --dry-run não cria nenhum arquivo ou diretório no HOME alvo"
@@ -1140,10 +1152,10 @@ for test_subcmd in install install-deps install-setups install-files uninstall e
     sb_guard="$(create_sandbox "guard-side-effects-$test_subcmd")"
     printf 'ID=fedora\n' > "$sb_guard/os-release"
 
-    # For resetfirstrun, seed a firstrun cookie to verify it is NOT deleted upon refusal
+    # For resetfirstrun, seed the real firstrun marker ($XDG_CONFIG_HOME/illogical-impulse/installed_true)
     if [[ "$test_subcmd" == "resetfirstrun" ]]; then
-        mkdir -p "$sb_guard/home/.local/state/dots-hyprland"
-        printf 'FIRSTRUN_TEST_COOKIE\n' > "$sb_guard/home/.local/state/dots-hyprland/firstrun.cookie"
+        mkdir -p "$sb_guard/home/.config/illogical-impulse"
+        printf 'INSTALLED_TRUE_PERSISTENT_MARKER\n' > "$sb_guard/home/.config/illogical-impulse/installed_true"
     fi
 
     guard_exit=0
@@ -1164,11 +1176,12 @@ for test_subcmd in install install-deps install-setups install-files uninstall e
     assert_eq "$guard_exit" "1" "Distro E2E: ./setup $test_subcmd -f em Fedora aborta com código 1 antes de qualquer ação"
 
     if [[ "$test_subcmd" == "resetfirstrun" ]]; then
-        # Check that the firstrun cookie was preserved
-        if [[ -f "$sb_guard/home/.local/state/dots-hyprland/firstrun.cookie" ]]; then
-            pass "Distro E2E: firstrun.cookie permanece intacto após recusa em ./setup resetfirstrun"
+        # Check that the real firstrun marker installed_true was preserved upon refusal
+        true_marker="$sb_guard/home/.config/illogical-impulse/installed_true"
+        if [[ -f "$true_marker" ]] && [[ "$(cat "$true_marker")" == "INSTALLED_TRUE_PERSISTENT_MARKER" ]]; then
+            pass "Distro E2E: XDG_CONFIG_HOME/illogical-impulse/installed_true permanece intacto após recusa em ./setup resetfirstrun"
         else
-            fail "Distro E2E: firstrun.cookie foi excluído indevidamente antes do consentimento"
+            fail "Distro E2E: XDG_CONFIG_HOME/illogical-impulse/installed_true foi excluído indevidamente antes do consentimento"
         fi
     else
         # Check that zero files or directories were created inside HOME (no logs, no config files)
@@ -1184,6 +1197,24 @@ for test_subcmd in install install-deps install-setups install-files uninstall e
     fi
 done
 
+# Teste complementar: resetfirstrun com consentimento explícito remove installed_true
+sb_rf_allow="$(create_sandbox "resetfirstrun-allow")"
+printf 'ID=fedora\n' > "$sb_rf_allow/os-release"
+mkdir -p "$sb_rf_allow/home/.config/illogical-impulse"
+printf 'INSTALLED_TRUE_TO_REMOVE\n' > "$sb_rf_allow/home/.config/illogical-impulse/installed_true"
+(
+    export HOME="$sb_rf_allow/home"
+    export XDG_CONFIG_HOME="$sb_rf_allow/home/.config"
+    export OS_RELEASE_FILE="$sb_rf_allow/os-release"
+    export HYBRID_ALLOW_UNSUPPORTED_DISTRO=true
+    ./setup resetfirstrun -f >/dev/null 2>&1
+) || true
+if [[ ! -f "$sb_rf_allow/home/.config/illogical-impulse/installed_true" ]]; then
+    pass "Distro E2E: ./setup resetfirstrun remove installed_true após autorização explícita"
+else
+    fail "Distro E2E: ./setup resetfirstrun não removeu installed_true mesmo após autorização"
+fi
+
 # 9.6c Comandos exclusivamente informativos não sofrem bloqueio da guarda
 for info_cmd in "help" "--help"; do
     info_exit=0
@@ -1194,9 +1225,10 @@ for info_cmd in "help" "--help"; do
     assert_eq "$info_exit" "0" "Informativo: ./setup $info_cmd conclui com código 0"
 done
 
-# 9.6d Regressão: Ausência de side effect de '--clean' antes do consentimento
-mkdir -p "${REPO_ROOT}/cache"
-clean_sentinel="${REPO_ROOT}/cache/sentinel_test_clean"
+# 9.6d Regressão: Ausência de side effect de '--clean' antes do consentimento (isolado em repositório temporário)
+iso_clean="$(create_isolated_repo "guard-clean-repo")"
+mkdir -p "$iso_clean/cache"
+clean_sentinel="$iso_clean/cache/sentinel_test_clean"
 printf 'CACHE_PAYLOAD_BEFORE_GUARD\n' > "$clean_sentinel"
 
 sb_clean="$(create_sandbox "guard-clean-test")"
@@ -1207,7 +1239,7 @@ clean_exit=0
     export HOME="$sb_clean/home"
     export PATH="$sb_clean/bin:$PATH"
     export OS_RELEASE_FILE="$sb_clean/os-release"
-    ./setup install -f --clean --skip-allgreeting >/dev/null 2>&1
+    "$iso_clean/setup" install -f --clean --skip-allgreeting >/dev/null 2>&1
 ) || clean_exit=$?
 
 assert_eq "$clean_exit" "1" "Distro: ./setup install -f --clean em Fedora aborta com código 1 antes de qualquer ação"
@@ -1216,10 +1248,11 @@ if [[ -f "$clean_sentinel" ]] && [[ "$(cat "$clean_sentinel")" == "CACHE_PAYLOAD
 else
     fail "Distro: cache foi limpo ou modificado antes da guarda de consentimento"
 fi
-rm -f "$clean_sentinel" 2>/dev/null || true
 
-# Testar que --clean funciona normalmente no Arch Linux
-clean_arch_sentinel="${REPO_ROOT}/cache/sentinel_arch_clean"
+# Testar que --clean preserva cache em --dry-run no Arch Linux (isolado em repositório temporário)
+iso_arch="$(create_isolated_repo "guard-clean-arch-repo")"
+mkdir -p "$iso_arch/cache"
+clean_arch_sentinel="$iso_arch/cache/sentinel_arch_clean"
 printf 'ARCH_CACHE_PAYLOAD\n' > "$clean_arch_sentinel"
 sb_arch_clean="$(create_sandbox "guard-clean-arch-test")"
 printf 'ID=arch\n' > "$sb_arch_clean/os-release"
@@ -1227,45 +1260,38 @@ printf 'ID=arch\n' > "$sb_arch_clean/os-release"
     export HOME="$sb_arch_clean/home"
     export PATH="$sb_arch_clean/bin:$PATH"
     export OS_RELEASE_FILE="$sb_arch_clean/os-release"
-    ./setup install --clean --dry-run >/dev/null 2>&1
+    "$iso_arch/setup" install --clean --dry-run >/dev/null 2>&1
 ) || true
 if [[ -f "$clean_arch_sentinel" ]]; then
     pass "Distro: ./setup install --clean --dry-run preserva cache conforme esperado"
 else
     fail "Distro: --dry-run removeu o cache indevidamente"
 fi
-rm -f "$clean_arch_sentinel" 2>/dev/null || true
 
-# 9.6e Segurança do arquivo os-release: suíte preserva override preexistente na raiz do repositório
-repo_os_release="${REPO_ROOT}/os-release"
-pre_existed=false
-saved_content=""
-if [[ -f "$repo_os_release" ]]; then
-    pre_existed=true
-    saved_content="$(cat "$repo_os_release")"
-fi
-
-sentinel_os_release="ID=custom_preexisting_override_do_not_delete"
-printf '%s\n' "$sentinel_os_release" > "$repo_os_release"
+# 9.6e Segurança do arquivo os-release: suíte preserva override preexistente em repositório temporário isolado
+iso_os="$(create_isolated_repo "os-release-isolated-repo")"
+sentinel_os_release="ID=custom_isolated_override_do_not_delete"
+printf '%s\n' "$sentinel_os_release" > "$iso_os/os-release"
 
 sb_os_guard="$(create_sandbox "os-release-safety-test")"
 printf 'ID=arch\n' > "$sb_os_guard/os-release"
 (
     export HOME="$sb_os_guard/home"
     export OS_RELEASE_FILE="$sb_os_guard/os-release"
-    ./setup install --dry-run >/dev/null 2>&1
+    "$iso_os/setup" install --dry-run >/dev/null 2>&1
 ) || true
 
-if [[ -f "$repo_os_release" ]] && [[ "$(cat "$repo_os_release")" == "$sentinel_os_release" ]]; then
-    pass "Suíte: arquivo preexistente ${REPO_ROOT}/os-release é estritamente preservado e não sobrescrito/excluído"
+if [[ -f "$iso_os/os-release" ]] && [[ "$(cat "$iso_os/os-release")" == "$sentinel_os_release" ]]; then
+    pass "Suíte: arquivo preexistente os-release em repo isolado é estritamente preservado e não sobrescrito/excluído"
 else
-    fail "Suíte: arquivo ${REPO_ROOT}/os-release foi modificado ou excluído indevidamente"
+    fail "Suíte: arquivo os-release em repo isolado foi modificado ou excluído indevidamente"
 fi
 
-if [[ "$pre_existed" == "true" ]]; then
-    printf '%s\n' "$saved_content" > "$repo_os_release"
+# Garantir que a raiz de trabalho real nunca teve os-release criado ou modificado
+if [[ ! -e "${REPO_ROOT}/os-release" ]]; then
+    pass "Suíte: raiz de trabalho ${REPO_ROOT}/os-release permanece 100% intocada e inexistente"
 else
-    rm -f "$repo_os_release"
+    fail "Suíte: arquivo os-release encontrado indevidamente na raiz real do repositório"
 fi
 
 # 9.7 Interactive: default answer is No; only y/Y proceeds
