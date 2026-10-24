@@ -1045,6 +1045,97 @@ fi
 ) && pass "Backups: unicidade garantida em reexecuções rápidas e zero sobrescrita em colisões de timestamp" \
   || fail "Backups: falha na resolução de colisão de timestamp ou sobrescrita de backup anterior"
 
+printf "\n${CLR_CYAN}=== 9. Aviso e consentimento para distribuições não suportadas ===${CLR_RST}\n"
+
+# Runs print_os_group_id_hybrid_unsupported in an isolated subshell, with a fake
+# os-release (picked up through REPO_ROOT/os-release) and no side effects on the host.
+# Usage: run_distro_guard <os-id> <os-id-like> <subcmd> <extra env assignments...>
+# Echoes combined output; the return code is the guard's exit code.
+run_distro_guard() {
+    local os_id="$1" os_like="$2" subcmd="$3"; shift 3
+    local gdir; gdir="$(mktemp -d "$TEST_ROOT/distro-guard.XXXXXX")"
+    printf 'ID=%s\nID_LIKE=%s\n' "$os_id" "$os_like" > "$gdir/os-release"
+    (
+        env "$@" REPO_ROOT="$gdir" SUBCMD_NAME="$subcmd" bash -c '
+            source "'"${REPO_ROOT}"'/sdata/lib/environment-variables.sh"
+            source "'"${REPO_ROOT}"'/sdata/lib/dist-determine.sh"
+            print_os_group_id_hybrid_unsupported
+        ' 2>&1
+    )
+}
+
+# 9.1 Arch Linux: completely silent no-op (installer behavior unchanged)
+rc=0; out="$(run_distro_guard arch "" install ask=false)" || rc=$?
+if [[ $rc -eq 0 && "$out" != *"UNSUPPORTED"* ]]; then
+    pass "Distro: Arch Linux não exibe aviso nem exige consentimento"
+else
+    fail "Distro: Arch Linux foi afetado pelo aviso de distro não suportada" "rc=$rc"
+fi
+
+# 9.2 Fedora, non-interactive install without opt-in: aborts before any change
+rc=0; out="$(run_distro_guard fedora "" install ask=false)" || rc=$?
+if [[ $rc -eq 1 && "$out" == *"UNSUPPORTED"* && "$out" == *"HYBRID_ALLOW_UNSUPPORTED_DISTRO"* ]]; then
+    pass "Distro: Fedora com 'install -f' é bloqueado antes de qualquer alteração e explica como prosseguir"
+else
+    fail "Distro: Fedora com 'install -f' não foi bloqueado" "rc=$rc"
+fi
+
+# 9.3 Gentoo/Debian-like/unknown also blocked (nix fallback path included)
+for spec in "gentoo:" "ubuntu:debian" "somethingelse:"; do
+    rc=0; out="$(run_distro_guard "${spec%%:*}" "${spec#*:}" install-deps ask=false)" || rc=$?
+    assert_eq "$rc" "1" "Distro: '${spec%%:*}' bloqueado em 'install-deps -f' sem consentimento explícito"
+done
+
+# 9.4 Explicit opt-in allows non-interactive install
+rc=0; out="$(run_distro_guard fedora "" install ask=false HYBRID_ALLOW_UNSUPPORTED_DISTRO=true)" || rc=$?
+assert_eq "$rc" "0" "Distro: HYBRID_ALLOW_UNSUPPORTED_DISTRO=true libera a instalação não interativa (mantém suporte herdado)"
+
+# 9.5 --dry-run never aborts (no system change)
+rc=0; out="$(run_distro_guard fedora "" install ask=false DRY_RUN=true)" || rc=$?
+if [[ $rc -eq 0 && "$out" == *"UNSUPPORTED"* ]]; then
+    pass "Distro: --dry-run exibe o aviso mas não aborta"
+else
+    fail "Distro: --dry-run foi abortado ou não exibiu aviso" "rc=$rc"
+fi
+
+# 9.6 install-files only copies configs: warns but does not block
+rc=0; out="$(run_distro_guard fedora "" install-files ask=false)" || rc=$?
+if [[ $rc -eq 0 && "$out" == *"UNSUPPORTED"* ]]; then
+    pass "Distro: install-files (somente cópia de configs) exibe o aviso sem bloquear"
+else
+    fail "Distro: install-files foi bloqueado ou não exibiu aviso" "rc=$rc"
+fi
+
+# 9.7 Interactive: default answer is No; only y/Y proceeds
+gdir_i="$(mktemp -d "$TEST_ROOT/distro-guard-i.XXXXXX")"
+printf 'ID=fedora\nID_LIKE=\n' > "$gdir_i/os-release"
+for answer in "" "n" "y"; do
+    rc=0
+    printf '%s\n' "$answer" | REPO_ROOT="$gdir_i" SUBCMD_NAME=install bash -c '
+        source "'"${REPO_ROOT}"'/sdata/lib/environment-variables.sh"
+        source "'"${REPO_ROOT}"'/sdata/lib/dist-determine.sh"
+        print_os_group_id_hybrid_unsupported
+    ' >/dev/null 2>&1 || rc=$?
+    if [[ "$answer" == "y" ]]; then
+        assert_eq "$rc" "0" "Distro: resposta interativa 'y' prossegue"
+    else
+        assert_eq "$rc" "1" "Distro: resposta interativa '${answer:-<Enter>}' aborta (padrão = Não)"
+    fi
+done
+
+# 9.8 Arch with --via-nix is also flagged as unsupported
+rc=0; out="$(run_distro_guard arch "" install ask=false INSTALL_VIA_NIX=true)" || rc=$?
+if [[ $rc -eq 1 && "$out" == *"UNSUPPORTED"* ]]; then
+    pass "Distro: --via-nix em Arch também é tratado como caminho não suportado"
+else
+    fail "Distro: --via-nix em Arch não foi sinalizado" "rc=$rc"
+fi
+
+# 9.9 Upstream community dist-* implementations are preserved (not deleted)
+for d in dist-fedora dist-gentoo dist-nix dist-arch; do
+    assert_file_exists "${REPO_ROOT}/sdata/${d}/install-deps.sh" "Distro: implementação herdada sdata/${d} preservada"
+done
+
 printf "\n=============================================================================\n"
 printf "Resumo dos Testes: ${CLR_GREEN}%d aprovados${CLR_RST}, ${CLR_RED}%d falharam${CLR_RST} (total: %d)\n" \
     "$PASS_COUNT" "$FAIL_COUNT" "$TOTAL_COUNT"

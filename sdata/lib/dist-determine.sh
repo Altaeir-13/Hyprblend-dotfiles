@@ -62,6 +62,61 @@ function print_os_group_id_architecture(){
     printf "=============\n\n"
     printf "${STY_RST}"
 }
+
+# Hyprland Hybrid Rice: official support is Arch Linux only.
+# The dist-fedora/dist-gentoo/dist-nix code paths below are kept as inherited from
+# upstream end-4/dots-hyprland, but they know nothing about the Caelestia Hybrid
+# frontend (no caelestia plugin / libcava / qt6-m3shapes dependencies) and have not
+# been validated for this project. This function is a no-op on Arch Linux.
+#
+# Behavior (only when OS_GROUP_ID != arch, or --via-nix was requested):
+#   - always prints a warning;
+#   - for subcommands that install packages (install, install-deps), refuses to continue
+#     without explicit consent: an interactive [y/N] prompt (default: No), or, in
+#     non-interactive mode (-f/--force), HYBRID_ALLOW_UNSUPPORTED_DISTRO=true;
+#   - --dry-run never aborts (it does not change the system).
+function print_os_group_id_hybrid_unsupported(){
+    if [[ "${OS_GROUP_ID}" == "arch" && "${INSTALL_VIA_NIX:-false}" != "true" ]]; then
+        return 0
+    fi
+    printf "${STY_RED}${STY_BOLD}"
+    printf "===UNSUPPORTED DISTRO / INSTALL PATH===\n"
+    printf "${STY_RST}${STY_RED}"
+    printf "Hyprland Hybrid Rice officially supports Arch Linux only.\n"
+    printf "The installation path for your system (OS_GROUP_ID=${OS_GROUP_ID}%s) is inherited\n" "$([[ "${INSTALL_VIA_NIX:-false}" == "true" ]] && echo ", --via-nix")"
+    printf "from upstream end-4/dots-hyprland and has NOT been validated with the Caelestia\n"
+    printf "Hybrid integration (Caelestia plugin, libcava, qt6-m3shapes, ui-switch, color bridges).\n"
+    printf "Packages may be missing, or the hybrid frontend may not work.\n"
+    printf "The end-4 (ii) frontend alone (--profile minimal) is the closest to upstream behavior,\n"
+    printf "but it is still not covered by this project's tests or support.\n"
+    printf "=======================================\n\n"
+    printf "${STY_RST}"
+
+    # Only the subcommands that install dependencies (packages) require consent.
+    case "${SUBCMD_NAME:-}" in
+        install|install-deps) ;;
+        *) return 0;;
+    esac
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        printf "${STY_YELLOW}[DRY-RUN] No changes will be made, continuing.${STY_RST}\n"
+        return 0
+    fi
+    if [[ "${HYBRID_ALLOW_UNSUPPORTED_DISTRO:-false}" == "true" ]]; then
+        printf "${STY_YELLOW}HYBRID_ALLOW_UNSUPPORTED_DISTRO=true: proceeding at your own risk.${STY_RST}\n"
+        return 0
+    fi
+    if [[ "${ask:-true}" == "false" ]]; then
+        printf "${STY_RED}Aborting before making any change (non-interactive mode).${STY_RST}\n"
+        printf "To proceed anyway, at your own risk: HYBRID_ALLOW_UNSUPPORTED_DISTRO=true ./setup ${SUBCMD_NAME} ...\n"
+        exit 1
+    fi
+    local p
+    read -p "Proceed anyway, at your own risk? [y/N]: " p || p=""
+    case "$p" in
+        [yY]) true;;
+        *) echo "Aborting..."; exit 1;;
+    esac
+}
 #####################################################################################
 
 ####################
@@ -126,3 +181,8 @@ case "${MACHINE_ARCH}" in
   "x86_64") true;;
   *) print_os_group_id_functions+=(print_os_group_id_architecture);;
 esac
+
+####################
+# Hybrid Rice support notice/consent (no-op on Arch Linux without --via-nix).
+# Kept last so it runs after the informational messages above.
+print_os_group_id_functions+=(print_os_group_id_hybrid_unsupported)

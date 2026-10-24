@@ -24,9 +24,28 @@ jobs:
 
       - name: Shell Syntax Validation (bash -n)
         run: |
-          find . -name "*.sh" -not -path "./.git/*" -exec bash -n {} +
-          bash -n setup
-          echo "All shell scripts passed syntax validation."
+          # NOTE: `bash -n a b c` only parses the FIRST file (the rest become arguments),
+          # so every script must be checked individually.
+          # Exception: fuzzel-emoji.sh keeps an emoji data section after `exit`, which is
+          # valid at runtime but not parseable as shell by `bash -n`.
+          fail=0
+          count=0
+          while IFS= read -r -d '' f; do
+            case "$f" in
+              ./dots/.config/hypr/hyprland/scripts/fuzzel-emoji.sh) continue ;;
+            esac
+            count=$((count + 1))
+            if ! bash -n "$f"; then
+              echo "::error file=${f#./}::bash -n failed"
+              fail=1
+            fi
+          done < <(find . -name "*.sh" -not -path "./.git/*" -print0)
+          for f in setup diagnose dots/.local/bin/rice-lock sdata/subcmd-virtmon/hypr_mon_guard; do
+            count=$((count + 1))
+            bash -n "$f" || { echo "::error file=$f::bash -n failed"; fail=1; }
+          done
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "All $count shell scripts passed syntax validation."
 
       - name: Check Portability (Zero Hardcoded Host Paths)
         run: |

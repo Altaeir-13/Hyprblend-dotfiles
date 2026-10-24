@@ -1,3 +1,9 @@
+> **Note (Hyprland Hybrid Rice):** this is the unmodified upstream README of
+> [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) (GPL-3.0), preserved here for attribution.
+> It was moved from `.github/README.md`, because GitHub gives that location priority over the
+> repository root `README.md`, which hid this project's own [README](../../README.md).
+> Instructions below describe the upstream project, not Hyprland Hybrid Rice.
+
 <div align="center">
     <h1>【 end_4's Hyprland dotfiles 】</h1>
     <h3></h3>
@@ -77,7 +83,7 @@
 </div>
 
 <div align="center">
-    <img src="assets/illogical-impulse.svg" alt="illogical-impulse logo" style="float:left; width:400;">
+    <img src="../../.github/assets/illogical-impulse.svg" alt="illogical-impulse logo" style="float:left; width:400;">
 </div>
 
 Widget system: Quickshell | Support: Yes
