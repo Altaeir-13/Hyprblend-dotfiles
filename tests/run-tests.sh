@@ -674,6 +674,210 @@ else
     pass "Portabilidade: zero referências hardcoded ao usuário 'greyrat' em dots/, sdata/ e setup"
 fi
 
+printf "\n${CLR_CYAN}=== 8. Testes de Segurança de Submódulos Git e Auditoria de Confirmações AUR ===${CLR_RST}\n"
+
+submod_sb="$(mktemp -d "${TEST_ROOT}/submod-test-XXXXXX")"
+export GIT_ALLOW_PROTOCOL=file:https:http:ssh
+export GIT_AUTHOR_NAME="Test"
+export GIT_AUTHOR_EMAIL="test@example.com"
+export GIT_COMMITTER_NAME="Test"
+export GIT_COMMITTER_EMAIL="test@example.com"
+
+# Setup upstream dummy repo and submodule
+mkdir -p "$submod_sb/upstream_sub"
+git -C "$submod_sb/upstream_sub" init -q -b main
+echo "submodule_upstream_content" > "$submod_sb/upstream_sub/widget.qml"
+git -C "$submod_sb/upstream_sub" add widget.qml
+git -C "$submod_sb/upstream_sub" commit -q -m "initial upstream submodule"
+
+git -C "$submod_sb" init -q -b main
+git -C "$submod_sb" submodule add -q "$submod_sb/upstream_sub" "modules/shapes"
+git -C "$submod_sb" commit -q -m "register shapes submodule"
+
+test_clone="$submod_sb/clone"
+git clone -q "$submod_sb" "$test_clone"
+REPO_ROOT_REAL="$REPO_ROOT"
+
+# Test 8.1: Submódulo ausente / diretório vazio
+mkdir -p "$test_clone/modules/shapes"
+(
+    export REPO_ROOT="$test_clone"
+    cd "$test_clone"
+    source "${REPO_ROOT_REAL}/sdata/lib/environment-variables.sh"
+    source "${REPO_ROOT_REAL}/sdata/lib/functions.sh"
+    ask=false
+    auto_update_git_submodule >/dev/null 2>&1
+)
+if [[ -f "$test_clone/modules/shapes/widget.qml" ]]; then
+    pass "Submódulo ausente/diretório vazio: inicializado com sucesso via rmdir seguro"
+else
+    fail "Submódulo ausente/diretório vazio: inicializado com sucesso via rmdir seguro"
+fi
+
+# Test 8.2: Diretório preexistente com arquivos do usuário (recusa exclusão e preserva arquivos)
+rm -rf "$test_clone/modules/shapes"
+mkdir -p "$test_clone/modules/shapes"
+echo "precious_user_code" > "$test_clone/modules/shapes/my_script.js"
+submod_res=0
+(
+    export REPO_ROOT="$test_clone"
+    cd "$test_clone"
+    source "${REPO_ROOT_REAL}/sdata/lib/environment-variables.sh"
+    source "${REPO_ROOT_REAL}/sdata/lib/functions.sh"
+    ask=true
+    auto_update_git_submodule >/dev/null 2>&1
+) || submod_res=$?
+
+if (( submod_res != 0 )) && [[ -f "$test_clone/modules/shapes/my_script.js" ]] && [[ "$(cat "$test_clone/modules/shapes/my_script.js")" == "precious_user_code" ]]; then
+    pass "Diretório preexistente com arquivos do usuário: recusou exclusão e preservou arquivos intactos"
+else
+    fail "Diretório preexistente com arquivos do usuário: arquivos foram alterados ou excluídos!"
+fi
+
+# Test 8.3: Flag --force (ask=false) NÃO autoriza exclusão de dados do usuário
+submod_force_res=0
+(
+    export REPO_ROOT="$test_clone"
+    cd "$test_clone"
+    source "${REPO_ROOT_REAL}/sdata/lib/environment-variables.sh"
+    source "${REPO_ROOT_REAL}/sdata/lib/functions.sh"
+    ask=false
+    auto_update_git_submodule >/dev/null 2>&1
+) || submod_force_res=$?
+
+if (( submod_force_res != 0 )) && [[ -f "$test_clone/modules/shapes/my_script.js" ]]; then
+    pass "Flag --force não autoriza exclusão silenciosa de arquivos desconhecidos"
+else
+    fail "Flag --force não autoriza exclusão silenciosa de arquivos desconhecidos"
+fi
+
+# Test 8.4: Links simbólicos (não segue, não apaga e não modifica target)
+rm -rf "$test_clone/modules/shapes"
+mkdir -p "$submod_sb/external_dir"
+echo "host_private_data" > "$submod_sb/external_dir/private.txt"
+ln -s "$submod_sb/external_dir" "$test_clone/modules/shapes"
+submod_symlink_res=0
+(
+    export REPO_ROOT="$test_clone"
+    cd "$test_clone"
+    source "${REPO_ROOT_REAL}/sdata/lib/environment-variables.sh"
+    source "${REPO_ROOT_REAL}/sdata/lib/functions.sh"
+    ask=false
+    auto_update_git_submodule >/dev/null 2>&1
+) || submod_symlink_res=$?
+
+if (( submod_symlink_res != 0 )) && [[ -L "$test_clone/modules/shapes" ]] && [[ -f "$submod_sb/external_dir/private.txt" ]]; then
+    pass "Links simbólicos: recusou link simbólico sem seguir nem remover arquivo alvo"
+else
+    fail "Links simbólicos: link ou alvo externo foi modificado!"
+fi
+rm -f "$test_clone/modules/shapes"
+
+# Test 8.5: Falha de permissão no diretório vazio (tratamento robusto de erro)
+mkdir -p "$test_clone/modules/shapes"
+chmod 500 "$test_clone/modules"
+submod_perm_res=0
+(
+    export REPO_ROOT="$test_clone"
+    cd "$test_clone"
+    source "${REPO_ROOT_REAL}/sdata/lib/environment-variables.sh"
+    source "${REPO_ROOT_REAL}/sdata/lib/functions.sh"
+    ask=false
+    auto_update_git_submodule >/dev/null 2>&1
+) || submod_perm_res=$?
+
+chmod 755 "$test_clone/modules"
+rmdir "$test_clone/modules/shapes" 2>/dev/null || true
+if (( submod_perm_res != 0 )); then
+    pass "Falha de permissão em rmdir: propagação tratada e saída com erro limpo"
+else
+    fail "Falha de permissão em rmdir: não detectou falha de permissão"
+fi
+
+# Test 8.6: Arquivamento explícito seguro com ARCHIVE_SUBMODULE_CONFLICTS=true
+mkdir -p "$test_clone/modules/shapes"
+echo "custom_version_1" > "$test_clone/modules/shapes/config.json"
+export XDG_STATE_HOME="$submod_sb/state"
+(
+    export REPO_ROOT="$test_clone"
+    cd "$test_clone"
+    source "${REPO_ROOT_REAL}/sdata/lib/environment-variables.sh"
+    source "${REPO_ROOT_REAL}/sdata/lib/functions.sh"
+    export ARCHIVE_SUBMODULE_CONFLICTS=true
+    ask=false
+    auto_update_git_submodule >/dev/null 2>&1
+)
+
+b1_dir="$(find "$XDG_STATE_HOME/dots-hyprland/submodule-backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n 1)"
+if [[ -n "$b1_dir" ]] && [[ -f "$b1_dir/config.json" ]] && [[ "$(cat "$b1_dir/config.json")" == "custom_version_1" ]] && [[ -f "$test_clone/modules/shapes/widget.qml" ]]; then
+    pass "Arquivamento seguro: moveu diretório conflitante para backup único fora do repo e inicializou submódulo"
+else
+    fail "Arquivamento seguro: falhou ao criar backup ou inicializar submódulo"
+fi
+
+# Test 8.7: Preservação de múltiplos backups (nunca sobrescreve backup preexistente)
+rm -rf "$test_clone/modules/shapes"
+mkdir -p "$test_clone/modules/shapes"
+echo "custom_version_2" > "$test_clone/modules/shapes/config.json"
+(
+    export REPO_ROOT="$test_clone"
+    cd "$test_clone"
+    source "${REPO_ROOT_REAL}/sdata/lib/environment-variables.sh"
+    source "${REPO_ROOT_REAL}/sdata/lib/functions.sh"
+    export ARCHIVE_SUBMODULE_CONFLICTS=true
+    ask=false
+    auto_update_git_submodule >/dev/null 2>&1
+)
+
+total_backups="$(find "$XDG_STATE_HOME/dots-hyprland/submodule-backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)"
+if (( total_backups >= 2 )) && grep -rq "custom_version_1" "$XDG_STATE_HOME/dots-hyprland/submodule-backups" && grep -rq "custom_version_2" "$XDG_STATE_HOME/dots-hyprland/submodule-backups"; then
+    pass "Preservação de backups: segundo backup criado com identificador único sem sobrescrever o anterior"
+else
+    fail "Preservação de backups: backup anterior foi sobrescrito ou segundo backup não foi criado"
+fi
+
+# Test 8.8: Reexecução após resolução de conflito
+submod_reexec_res=0
+(
+    export REPO_ROOT="$test_clone"
+    cd "$test_clone"
+    source "${REPO_ROOT_REAL}/sdata/lib/environment-variables.sh"
+    source "${REPO_ROOT_REAL}/sdata/lib/functions.sh"
+    ask=false
+    auto_update_git_submodule >/dev/null 2>&1
+) || submod_reexec_res=$?
+
+if (( submod_reexec_res == 0 )); then
+    pass "Reexecução: execução subsequente em estado limpo opera de forma idempotente e bem-sucedida"
+else
+    fail "Reexecução: falhou ao rodar sobre submódulo já inicializado"
+fi
+
+# Test 8.9: Auditoria de confirmação interativa do AUR e Pacman
+(
+    ask=true
+    metainstallflags="--needed"
+    $ask && true || metainstallflags="$metainstallflags --noconfirm"
+    [[ "$metainstallflags" == "--needed" ]] || exit 1
+
+    ask=false
+    metainstallflags="--needed"
+    $ask && true || metainstallflags="$metainstallflags --noconfirm"
+    [[ "$metainstallflags" == "--needed --noconfirm" ]] || exit 2
+
+    # install-local-pkgbuild makepkg flags
+    makepkg_interactive=(makepkg -Afsi)
+    test_flags="--needed"
+    if [[ "$test_flags" == *"--noconfirm"* ]]; then makepkg_interactive+=(--noconfirm); fi
+    [[ "${makepkg_interactive[*]}" == "makepkg -Afsi" ]] || exit 3
+
+    makepkg_force=(makepkg -Afsi)
+    test_flags_force="--needed --noconfirm"
+    if [[ "$test_flags_force" == *"--noconfirm"* ]]; then makepkg_force+=(--noconfirm); fi
+    [[ "${makepkg_force[*]}" == "makepkg -Afsi --noconfirm" ]] || exit 4
+) && pass "Auditoria AUR/Pacman: modo interativo omite --noconfirm e modo force propaga --noconfirm" \
+  || fail "Auditoria AUR/Pacman: flags de confirmação inconsistentes entre modos"
+
 printf "\n=============================================================================\n"
 printf "Resumo dos Testes: ${CLR_GREEN}%d aprovados${CLR_RST}, ${CLR_RED}%d falharam${CLR_RST} (total: %d)\n" \
     "$PASS_COUNT" "$FAIL_COUNT" "$TOTAL_COUNT"

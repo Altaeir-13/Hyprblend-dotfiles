@@ -109,14 +109,28 @@ Para o perfil completo com todos os terminais e ferramentas extras:
 
 ## Dependências do AUR e Considerações de Segurança
 
-O perfil híbrido compila e instala automaticamente os seguintes componentes do Arch User Repository (AUR):
+O perfil híbrido compila e instala dependências oficiais e componentes do Arch User Repository (AUR), incluindo:
 - `qt6-m3shapes-git`: Primitivas vetoriais de animação do Caelestia.
 - `libcava`: Biblioteca de visualização de espectro de áudio.
 - `ttf-material-symbols-variable-git`, `ttf-rubik-vf`: Tipografia da interface.
 - `breeze-plus`, `darkly-bin`: Estilos de janelas e temas Qt.
 
+### Modos de Instalação e Confirmação de Pacotes:
+- **Modo Interativo Padrão (`./setup install`):**
+  O instalador opera com confirmação ativada (`$ask=true`). O `yay` e o `pacman` solicitam confirmação ao usuário, permitindo revisar a lista de dependências, inspecionar diffs e verificar PKGBUILDs de terceiros antes de autorizar a compilação e a instalação no sistema.
+- **Modo Automatizado (`./setup install -f` ou `--force`):**
+  Indicado exclusivamente para testes, integração contínua (CI) e instalações não-assistidas em ambientes descartáveis ou VMs limpas. Neste modo, `--noconfirm` é propagado para `pacman` e `yay` aceitando seleções automáticas.
+
 > [!WARNING]
-> O instalador utiliza `yay-bin` de maneira não-interativa (`--sudoloop --needed --noconfirm`) para compilar dependências com as flags oficiais do sistema. Como em qualquer uso do AUR, certifique-se de que confia nas fontes e nos PKGBUILDs baixados.
+> O uso de `-f` / `--force` suprime confirmações de pacotes de software, mas **nunca autoriza a exclusão silenciosa** de dados pessoais ou diretórios desconhecidos.
+
+### Proteção de Submódulos e Arquivos Pessoais
+Caso o caminho de um submódulo Git (como `shapes`) já contenha arquivos preexistentes do usuário ou alterações não gerenciadas:
+- O instalador **aborta imediatamente**, sem sobrescrever ou apagar qualquer arquivo.
+- Se desejar que o instalador arquive automaticamente o diretório conflitante com um identificador único fora do repositório (`~/.local/state/dots-hyprland/submodule-backups/`), execute com a opção explícita:
+  ```bash
+  ./setup install --archive-submodule-conflicts
+  ```
 
 ---
 

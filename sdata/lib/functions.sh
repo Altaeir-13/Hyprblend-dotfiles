@@ -66,7 +66,11 @@ function check_install_prerequisites() {
   if (( ${#missing[@]} > 0 )); then
     if command -v pacman >/dev/null 2>&1; then
       echo -e "${STY_YELLOW}[$0]: Installing missing base prerequisite packages via pacman: ${missing[*]}${STY_RST}"
-      sudo pacman -S --needed --noconfirm "${missing[@]}" 2>/dev/null || true
+      if [[ "${ask:-true}" == "true" ]]; then
+        sudo pacman -S --needed "${missing[@]}" 2>/dev/null || true
+      else
+        sudo pacman -S --needed --noconfirm "${missing[@]}" 2>/dev/null || true
+      fi
       missing=()
       for cmd in "${required_cmds[@]}"; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -461,16 +465,126 @@ function check_disk_space() {
 }
 
 function auto_update_git_submodule(){
-  if git submodule status --recursive 2>/dev/null | grep -E '^[+-U]';then
-    # Note: `git pull --recurse-submodules` cannot substitute `git submodule update --init --recursive` cuz it does not init a submodule when needed.
-    # If destination path exists without .git, git will refuse to clone into non-empty dir.
-    local uninit_paths
-    uninit_paths=$(git submodule status --recursive 2>/dev/null | awk '/^[-]/ {print $2}')
-    for p in $uninit_paths; do
-      if [[ -d "$p" && ! -d "$p/.git" && ! -f "$p/.git" ]]; then
-        rm -rf "$p"
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] Would check and update git submodules.${STY_RST}"
+    return 0
+  fi
+
+  # Check if repository has any submodules configured
+  if [[ ! -f "${REPO_ROOT}/.gitmodules" ]]; then
+    return 0
+  fi
+
+  # Read registered submodule paths from .gitmodules
+  local registered_paths=()
+  readarray -t registered_paths < <(git config --file "${REPO_ROOT}/.gitmodules" --get-regexp '^submodule\..*\.path$' 2>/dev/null | awk '{print $2}')
+  if (( ${#registered_paths[@]} == 0 )); then
+    return 0
+  fi
+
+  # Inspect every registered submodule path for conflicts, symlinks, and orphaned directories
+  local p
+  for p in "${registered_paths[@]}"; do
+    [[ -z "$p" ]] && continue
+
+    # Prevent path traversal outside REPO_ROOT
+    if [[ "$p" == /* || "$p" == *".."* ]]; then
+      echo -e "${STY_RED}[$0]: Insecure submodule path detected in .gitmodules: '$p'${STY_RST}" >&2
+      return 1
+    fi
+
+    local full_path="${REPO_ROOT}/${p}"
+
+    # 1. Symlink check: never follow, remove, or modify a symbolic link
+    if [[ -L "$full_path" ]]; then
+      echo -e "${STY_RED}[$0]: ERROR: Submodule destination '$p' is a symbolic link pointing to '$(readlink "$full_path")'.${STY_RST}" >&2
+      echo -e "${STY_YELLOW}To protect your system, the installer will not follow or delete symbolic links.${STY_RST}" >&2
+      echo -e "${STY_YELLOW}Please remove or relocate this symlink manually before proceeding:${STY_RST}" >&2
+      echo -e "  rm \"$full_path\"" >&2
+      return 1
+    fi
+
+    # 2. Non-directory file check (e.g. regular file, fifo, socket)
+    if [[ -e "$full_path" && ! -d "$full_path" ]]; then
+      echo -e "${STY_RED}[$0]: ERROR: Submodule destination '$p' exists as a non-directory file.${STY_RST}" >&2
+      echo -e "${STY_YELLOW}Please move or remove this file manually before proceeding:${STY_RST}" >&2
+      echo -e "  mv \"$full_path\" \"${full_path}.bak\"" >&2
+      return 1
+    fi
+
+    # 3. Directory check
+    if [[ -d "$full_path" ]]; then
+      # If it's already a valid git repository or git submodule worktree, leave it alone
+      if [[ -d "$full_path/.git" || -f "$full_path/.git" ]]; then
+        continue
       fi
-    done
+
+      # Check if the directory is completely empty
+      local is_empty=false
+      if ! find "$full_path" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
+        is_empty=true
+      fi
+
+      if [[ "$is_empty" == true ]]; then
+        echo -e "${STY_BLUE}[$0]: Removing empty leftover directory '$p' to allow submodule initialization...${STY_RST}"
+        if ! rmdir "$full_path" 2>/dev/null; then
+          echo -e "${STY_RED}[$0]: ERROR: Failed to remove empty directory '$p'. Check directory permissions.${STY_RST}" >&2
+          return 1
+        fi
+      else
+        # Directory contains files/data!
+        if [[ "${ARCHIVE_SUBMODULE_CONFLICTS:-false}" == "true" ]]; then
+          # Safe archiving to non-synchronized state directory
+          local safe_backup_root="${XDG_STATE_HOME:-$HOME/.local/state}/dots-hyprland/submodule-backups"
+          mkdir -p "$safe_backup_root" || {
+            echo -e "${STY_RED}[$0]: ERROR: Failed to create backup directory '$safe_backup_root'. Check permissions.${STY_RST}" >&2
+            return 1
+          }
+
+          local base_name
+          base_name="$(basename "$p")"
+          local timestamp
+          timestamp="$(date +%Y%m%d_%H%M%S)"
+          local backup_dest="${safe_backup_root}/${base_name}_${timestamp}"
+          local counter=1
+          while [[ -e "$backup_dest" || -L "$backup_dest" ]]; do
+            backup_dest="${safe_backup_root}/${base_name}_${timestamp}_${counter}"
+            ((counter++))
+          done
+
+          echo -e "${STY_YELLOW}[$0]: Safely archiving unmanaged submodule directory '$p' to:${STY_RST}"
+          echo -e "${STY_GREEN}  $backup_dest${STY_RST}"
+
+          if ! mv "$full_path" "$backup_dest"; then
+            echo -e "${STY_RED}[$0]: ERROR: Failed to move '$full_path' to '$backup_dest'. Aborting to protect data.${STY_RST}" >&2
+            return 1
+          fi
+        else
+          # By default (and even with -f / --force), abort cleanly with resolution guidance
+          echo -e "${STY_RED}==============================================================================${STY_RST}" >&2
+          echo -e "${STY_RED}[$0]: CONFLICT: Submodule directory '$p' contains unmanaged files!${STY_RST}" >&2
+          echo -e "${STY_RED}==============================================================================${STY_RST}" >&2
+          echo -e "The path '$p' is registered as a Git submodule, but already contains files without Git metadata." >&2
+          echo -e "To prevent any accidental loss of personal files or custom code, the installer will NOT overwrite or remove this directory." >&2
+          echo -e "" >&2
+          echo -e "${STY_CYAN}How to resolve this conflict:${STY_RST}" >&2
+          echo -e "  1. If these are personal files, move them to safety outside the repository:" >&2
+          echo -e "     mv \"$full_path\" ~/backup_$(basename "$p")" >&2
+          echo -e "  2. If these files are no longer needed, remove the directory manually:" >&2
+          echo -e "     rm -rf \"$full_path\"" >&2
+          echo -e "  3. To have the installer safely archive conflicting directories automatically to" >&2
+          echo -e "     '~/.local/state/dots-hyprland/submodule-backups', re-run with:" >&2
+          echo -e "     ./setup install --archive-submodule-conflicts" >&2
+          echo -e "" >&2
+          echo -e "${STY_YELLOW}Note: Even with --force, unmanaged user files are never deleted silently.${STY_RST}" >&2
+          return 1
+        fi
+      fi
+    fi
+  done
+
+  # Check if submodules need init/update in Git
+  if git submodule status --recursive 2>/dev/null | grep -E '^[+-U]'; then
     x git submodule update --init --recursive
   fi
 }
@@ -540,8 +654,13 @@ function install_cmds(){
           *) pkgs+=($cmd) ;;
         esac
       done
-      v sudo pacman -Syu
-      v sudo pacman -S --noconfirm --needed "${pkgs[@]}"
+      if [[ "${ask:-true}" == "true" ]]; then
+        v sudo pacman -Syu
+        v sudo pacman -S --needed "${pkgs[@]}"
+      else
+        v sudo pacman -Syu --noconfirm
+        v sudo pacman -S --noconfirm --needed "${pkgs[@]}"
+      fi
       ;;
     "debian")
       local pkgs=()

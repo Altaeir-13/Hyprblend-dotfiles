@@ -2,11 +2,19 @@
 # It's not for directly running.
 
 install-yay(){
-  x sudo pacman -S --needed --noconfirm base-devel git
+  if $ask; then
+    x sudo pacman -S --needed base-devel git
+  else
+    x sudo pacman -S --needed --noconfirm base-devel git
+  fi
   x rm -rf /tmp/buildyay
   x git clone https://aur.archlinux.org/yay-bin.git /tmp/buildyay
   x cd /tmp/buildyay
-  x makepkg -si --noconfirm
+  if $ask; then
+    x makepkg -si
+  else
+    x makepkg -si --noconfirm
+  fi
   x cd ${REPO_ROOT}
   x rm -rf /tmp/buildyay
 }
@@ -106,7 +114,11 @@ install-local-pkgbuild() {
   # -s, --syncdeps: Install missing dependencies using pacman. When build-time or run-time dependencies are not found, pacman will try to resolve them.
   # -f, --force: build a package even if it already exists in the PKGDEST
   # -i, --install: Install or upgrade the package after a successful build using pacman(8).
-  x makepkg -Afsi --noconfirm
+  local -a makepkg_cmd=(makepkg -Afsi)
+  if [[ "$installflags" == *"--noconfirm"* ]]; then
+    makepkg_cmd+=(--noconfirm)
+  fi
+  x "${makepkg_cmd[@]}"
   x popd
 }
 
@@ -135,7 +147,11 @@ done
 
 if [[ ${#ARCH_EXTRA_PKGS[@]} -gt 0 ]]; then
   printf "${STY_CYAN}[$0]: Installing profile extra packages (${INSTALL_PROFILE}): ${ARCH_EXTRA_PKGS[*]}${STY_RST}\n"
-  v sudo pacman -S --needed --noconfirm "${ARCH_EXTRA_PKGS[@]}"
+  if $ask; then
+    v sudo pacman -S --needed "${ARCH_EXTRA_PKGS[@]}"
+  else
+    v sudo pacman -S --needed --noconfirm "${ARCH_EXTRA_PKGS[@]}"
+  fi
 fi
 
 install-dinit-service-packages(){
@@ -154,7 +170,11 @@ install-dinit-service-packages(){
 
   if (( ${#pkgs[@]} > 0 )); then
     printf "${STY_YELLOW}[$0]: Detected dinit init system, installing service packages: ${pkgs[*]}${STY_RST}\n"
-    x sudo pacman -S --needed --noconfirm "${pkgs[@]}"
+    if $ask; then
+      x sudo pacman -S --needed "${pkgs[@]}"
+    else
+      x sudo pacman -S --needed --noconfirm "${pkgs[@]}"
+    fi
   fi
 }
 showfun install-dinit-service-packages
