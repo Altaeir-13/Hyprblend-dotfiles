@@ -29,13 +29,16 @@ v setup_user_group
 
 if [[ -d /run/systemd/system ]]; then
   if systemctl --version >/dev/null 2>&1; then
-    # For Fedora, uinput is required for the virtual keyboard to function, and udev rules enable input group users to utilize it.
+    # uinput is required for ydotool / virtual input, and udev rules enable input group users to utilize it.
     if [[ "$OS_GROUP_ID" == "fedora" ]]; then
       v bash -c "echo uinput | sudo tee /etc/modules-load.d/uinput.conf"
       v bash -c 'echo SUBSYSTEM==\"misc\", KERNEL==\"uinput\", MODE=\"0660\", GROUP=\"input\" | sudo tee /etc/udev/rules.d/99-uinput.rules'
     else
       v bash -c "echo i2c-dev | sudo tee /etc/modules-load.d/i2c-dev.conf"
+      v bash -c 'echo KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\", OPTIONS+=\"static_node=uinput\" | sudo tee /etc/udev/rules.d/99-uinput.rules'
     fi
+    try sudo udevadm control --reload-rules
+    try sudo udevadm trigger
     # TODO: find a proper way for enable Nix installed ydotool. When running `systemctl --user enable ydotool, it errors "Failed to enable unit: Unit ydotool.service does not exist".
     if [[ ! "${INSTALL_VIA_NIX}" == true ]]; then
       if [[ "$OS_GROUP_ID" == "fedora" ]]; then
@@ -43,12 +46,16 @@ if [[ -d /run/systemd/system ]]; then
       fi
       # When $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR are empty, it commonly means that the current user has been logged in with `su - user` or `ssh user@hostname`. In such case `systemctl --user enable <service>` is not usable. It should be `sudo systemctl --machine=$(whoami)@.host --user enable <service>` instead.
       if [[ ! -z "${DBUS_SESSION_BUS_ADDRESS}" ]]; then
-        v systemctl --user enable ydotool --now
+        v systemctl --user enable ydotool
+        try systemctl --user start ydotool
       else
-        v sudo systemctl --machine=$(whoami)@.host --user enable ydotool --now
+        v sudo systemctl --machine=$(whoami)@.host --user enable ydotool
+        try sudo systemctl --machine=$(whoami)@.host --user start ydotool
       fi
     fi
-    v sudo systemctl enable bluetooth --now
+    if systemctl list-unit-files bluetooth.service >/dev/null 2>&1; then
+      v sudo systemctl enable bluetooth --now
+    fi
   else
     echo -e "${STY_RED}Systemd detected, but the systemctl command is unavailable.${STY_RST}"
     pause
@@ -102,6 +109,11 @@ if [[ "$OS_GROUP_ID" == "gentoo" ]]; then
   v sudo chown -R $(whoami):$(whoami) ~/.local/
 fi
 
-v gsettings set org.gnome.desktop.interface font-name 'Google Sans Flex Medium 11 @opsz=11,wght=500'
-v gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
-v kwriteconfig6 --file kdeglobals --group KDE --key widgetStyle Darkly
+if command -v gsettings >/dev/null 2>&1 && gsettings list-schemas | grep -q '^org\.gnome\.desktop\.interface$'; then
+  v gsettings set org.gnome.desktop.interface font-name 'Google Sans Flex Medium 11 @opsz=11,wght=500'
+  v gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
+fi
+
+if command -v kwriteconfig6 >/dev/null 2>&1; then
+  v kwriteconfig6 --file kdeglobals --group KDE --key widgetStyle Darkly
+fi

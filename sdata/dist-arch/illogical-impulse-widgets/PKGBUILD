@@ -16,4 +16,7 @@ depends=(
   translate-shell
   wlogout
   libqalculate
+  qt6-positioning
+  qt6-sensors
+  syntax-highlighting
 )

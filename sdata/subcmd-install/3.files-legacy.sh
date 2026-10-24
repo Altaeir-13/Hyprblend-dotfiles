@@ -4,11 +4,11 @@
 # shellcheck shell=bash
 
 #####################################################################################
-# MISC (For dots/.config/* but not quickshell, not fish, not Hyprland, not fontconfig)
+# MISC (For dots/.config/* but not quickshell, not caelestia, not fish, not Hyprland, not fontconfig)
 case "${SKIP_MISCCONF}" in
   true) true;;
   *)
-    for i in $(find dots/.config/ -mindepth 1 -maxdepth 1 ! -name 'quickshell' ! -name 'fish' ! -name 'hypr' ! -name 'fontconfig' -exec basename {} \;); do
+    for i in $(find dots/.config/ -mindepth 1 -maxdepth 1 ! -name 'quickshell' ! -name 'caelestia' ! -name 'fish' ! -name 'hypr' ! -name 'fontconfig' -exec basename {} \;); do
 #      i="dots/.config/$i"
       echo "[$0]: Found target: dots/.config/$i"
       if [ -d "dots/.config/$i" ];then install_dir__sync "dots/.config/$i" "$XDG_CONFIG_HOME/$i"
@@ -22,8 +22,15 @@ esac
 case "${SKIP_QUICKSHELL}" in
   true) true;;
   *)
-     # Should overwriting the whole directory not only ~/.config/quickshell/ii/ cuz https://github.com/end-4/dots-hyprland/issues/2294#issuecomment-3448671064
-    install_dir__sync dots/.config/quickshell "$XDG_CONFIG_HOME"/quickshell
+    # Explicit per-component sync: never run destructive rsync --delete on the root ~/.config/quickshell
+    install_dir__sync dots/.config/quickshell/ii "$XDG_CONFIG_HOME"/quickshell/ii
+    install_file dots/.config/quickshell/ui-switch.sh "$XDG_CONFIG_HOME"/quickshell/ui-switch.sh
+    install_file dots/.config/quickshell/ui-switch.sh "$XDG_BIN_HOME"/ui-switch.sh
+    if [[ "${INSTALL_CAELESTIA_HYBRID:-true}" == "true" ]]; then
+      install_dir__sync dots/.config/quickshell/caelestia-hybrid "$XDG_CONFIG_HOME"/quickshell/caelestia-hybrid
+      # Preserve hardware-specific ~/.config/caelestia/monitors/* by only managing shell.json
+      install_file__auto_backup dots/.config/caelestia/shell.json "$XDG_CONFIG_HOME"/caelestia/shell.json
+    fi
     ;;
 esac
 
@@ -48,8 +55,9 @@ case "${SKIP_HYPRLAND}" in
   true) true;;
   *)
     install_dir__sync dots/.config/hypr/hyprland "$XDG_CONFIG_HOME"/hypr/hyprland
+    install_dir__sync dots/.config/hypr/hyprlock "$XDG_CONFIG_HOME"/hypr/hyprlock
     if [ -f "${XDG_CONFIG_HOME}/hypr/hyprland.conf" ]; then
-      mv "${XDG_CONFIG_HOME}/hypr/hyprland.conf" "${XDG_CONFIG_HOME}/hypr/hyprland.conf.old" # disable old config
+      v mv "${XDG_CONFIG_HOME}/hypr/hyprland.conf" "${XDG_CONFIG_HOME}/hypr/hyprland.conf.old" # disable old config
       echo 'hyprland.conf has been renamed to hyprland.conf.old. This is to allow the new lua config to load.'
     fi
     for i in hyprlock.conf ; do
@@ -77,3 +85,4 @@ case "${SKIP_HYPRLAND}" in
 esac
 
 install_file "dots/.local/share/icons/illogical-impulse.svg" "${XDG_DATA_HOME}"/icons/illogical-impulse.svg
+install_file "dots/.local/bin/rice-lock" "${XDG_BIN_HOME}"/rice-lock

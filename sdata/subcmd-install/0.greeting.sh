@@ -33,6 +33,20 @@ pause
 case $ask in
   false) true ;;
   *) 
+    if [[ "${INSTALL_PROFILE_EXPLICIT:-false}" != "true" ]]; then
+      printf "${STY_CYAN}${STY_BOLD}Select installation profile:${STY_RST}\n"
+      printf "${STY_CYAN}"
+      printf "  1) minimal  = Hyprland + end-4 (illogical-impulse)\n"
+      printf "  2) hybrid   = Hyprland + end-4 + Caelestia Hybrid (DEFAULT)\n"
+      printf "  3) complete = Hybrid + optional desktop apps & full customizations\n"
+      printf "${STY_RST}"
+      read -p "===> [1/2/3 (default: 2)]: " prof_choice
+      case "$prof_choice" in
+        1|minimal) INSTALL_PROFILE="minimal" ;;
+        3|complete) INSTALL_PROFILE="complete" ;;
+        *) INSTALL_PROFILE="hybrid" ;;
+      esac
+    fi
     printf "${STY_BLUE}"
     printf "${STY_BOLD}Do you want to confirm every time before a command executes?${STY_RST}\n"
     printf "${STY_BLUE}"

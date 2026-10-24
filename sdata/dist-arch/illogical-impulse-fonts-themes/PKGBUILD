@@ -6,13 +6,14 @@ pkgdesc='Illogical Impulse Fonts and Theming Dependencies'
 arch=(any)
 license=(None)
 depends=(
-  adw-gtk-theme-git
+  adw-gtk-theme
   breeze
   breeze-plus
   darkly-bin
   eza
   fish
   fontconfig
+  gsettings-desktop-schemas
   kitty
   matugen
   otf-space-grotesk

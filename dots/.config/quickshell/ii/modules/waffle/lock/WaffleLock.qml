@@ -47,6 +47,7 @@ LockScreen {
                 }
             }
             source: Config.options.background.wallpaperPath
+            cache: false
             fillMode: Image.PreserveAspectCrop
 
             PropertyAnimation {
