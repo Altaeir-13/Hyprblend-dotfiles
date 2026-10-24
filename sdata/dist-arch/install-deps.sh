@@ -107,8 +107,12 @@ implicitize_old_dependencies(){
 
 #####################################################################################
 if ! command -v pacman >/dev/null 2>&1; then
-  printf "${STY_RED}[$0]: pacman not found, it seems that the system is not ArchLinux or Arch-based distros. Aborting...${STY_RST}\n"
-  exit 1
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo -e "${STY_YELLOW}[DRY-RUN] pacman not present on host; dependency checks simulated.${STY_RST}"
+  else
+    printf "${STY_RED}[$0]: pacman not found, it seems that the system is not ArchLinux or Arch-based distros. Aborting...${STY_RST}\n"
+    exit 1
+  fi
 fi
 
 # Keep makepkg from resetting sudo credentials

@@ -254,6 +254,27 @@ fi
 exit 0
 EOF
 
+        # Mock `pacman`
+    cat > "$sb/bin/pacman" <<'MOCK_PACMAN'
+#!/usr/bin/env bash
+STATE_DIR="${MOCK_STATE_DIR:-/tmp}"
+echo "pacman $*" >> "$STATE_DIR/commands.log"
+case "${1:-}" in
+    -Qq) exit 1 ;;
+    -Qeq) echo ""; exit 0 ;;
+    -S|-Syu|-R) exit 0 ;;
+    *) exit 0 ;;
+esac
+MOCK_PACMAN
+
+    # Mock `yay`
+    cat > "$sb/bin/yay" <<'MOCK_YAY'
+#!/usr/bin/env bash
+STATE_DIR="${MOCK_STATE_DIR:-/tmp}"
+echo "yay $*" >> "$STATE_DIR/commands.log"
+exit 0
+MOCK_YAY
+
     chmod +x "$sb/bin/"*
     printf '%s\n' "$sb"
 }
