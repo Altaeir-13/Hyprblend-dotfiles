@@ -14,8 +14,8 @@ Singleton {
     property string osPrettyName
     property string osId
     property list<string> osIdLike
-    property string osLogo: Qt.resolvedUrl(`${Quickshell.shellDir}/assets/logo.svg`)
-    property bool isDefaultLogo: true
+    property string osLogo: "file://" + Paths.home + "/.local/share/redshift-os/icons/redshift-symbolic.svg"
+    property bool isDefaultLogo: false
 
     property string uptime
     // Uptime trimmed to its two largest components
@@ -55,20 +55,17 @@ Singleton {
 
             const fd = key => lines.find(l => l.startsWith(`${key}=`))?.split("=")[1].replace(/"/g, "") ?? "";
 
-            root.osName = fd("NAME");
-            root.osPrettyName = fd("PRETTY_NAME");
+            root.osName = "Redshift OS";
+            root.osPrettyName = "Redshift OS";
             root.osId = fd("ID");
             root.osIdLike = fd("ID_LIKE").split(" ");
 
-            const logo = Quickshell.iconPath(fd("LOGO"), true);
-            if (GlobalConfig.general.logo === "caelestia") {
-                root.osLogo = Qt.resolvedUrl(`${Quickshell.shellDir}/assets/logo.svg`);
-                root.isDefaultLogo = true;
-            } else if (GlobalConfig.general.logo) {
+            const defaultRedshiftLogo = "file://" + Paths.home + "/.local/share/redshift-os/icons/redshift-symbolic.svg";
+            if (GlobalConfig.general.logo && GlobalConfig.general.logo !== "caelestia") {
                 root.osLogo = Quickshell.iconPath(GlobalConfig.general.logo, true) || "file://" + Paths.absolutePath(GlobalConfig.general.logo);
                 root.isDefaultLogo = false;
-            } else if (logo) {
-                root.osLogo = logo;
+            } else {
+                root.osLogo = defaultRedshiftLogo;
                 root.isDefaultLogo = false;
             }
         }

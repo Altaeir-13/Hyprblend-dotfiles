@@ -10,9 +10,9 @@ import Quickshell.Io
  */
 Singleton {
     id: root
-    property string distroName: "Unknown"
+    property string distroName: "Redshift OS"
     property string distroId: "unknown"
-    property string distroIcon: "linux-symbolic"
+    property string distroIcon: "redshift-symbolic"
     property string username: "user"
     property string homeUrl: ""
     property string documentationUrl: ""
@@ -56,33 +56,10 @@ Singleton {
             const logoFieldMatch = textOsRelease.match(/^LOGO=['"]?(.+?)['"]?$/m)
             logo = logoFieldMatch ? logoFieldMatch[1] : ""
 
-            // Update the distroIcon property based on distroId
-            switch (distroId) {
-                case "artix":
-                case "arch": distroIcon = "arch-symbolic"; break;
-                case "manjaro": distroIcon = "manjaro-symbolic"; break;
-                case "endeavouros": distroIcon = "endeavouros-symbolic"; break;
-                case "cachyos": distroIcon = "cachyos-symbolic"; break;
-                case "nixos": distroIcon = "nixos-symbolic"; break;
-                case "fedora": distroIcon = "fedora-symbolic"; break;
-                case "linuxmint":
-                case "ubuntu":
-                case "zorin":
-                case "popos": distroIcon = "ubuntu-symbolic"; break;
-                case "debian":
-                case "raspbian":
-                case "kali": distroIcon = "debian-symbolic"; break;
-                case "funtoo":
-                case "gentoo": distroIcon = "gentoo-symbolic"; break;
-                default: distroIcon = "linux-symbolic"; break;
-            }
-            if (textOsRelease.toLowerCase().includes("nyarch")) {
-                distroIcon = "nyarch-symbolic"
-            }
-
-            if (logo.trim().length === 0) {
-                logo = distroIcon
-            }
+            // Update the distroIcon property to Redshift OS
+            distroName = "Redshift OS"
+            distroIcon = "redshift-symbolic"
+            logo = "redshift-symbolic"
 
         }
     }
