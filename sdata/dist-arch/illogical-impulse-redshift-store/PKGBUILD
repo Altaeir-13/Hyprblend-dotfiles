@@ -1,6 +1,6 @@
 groups=(illogical-impulse)
 pkgname=illogical-impulse-redshift-store
-pkgver=1.0
+pkgver=1.0.0
 pkgrel=1
 pkgdesc='Illogical Impulse Redshift Store (Qt6/QML Software Center Dependencies)'
 arch=(any)
@@ -21,23 +21,47 @@ depends=(
 )
 
 package() {
-  local _repo_root
-  _repo_root="$(cd "${startdir}/../../.." 2>/dev/null && pwd || true)"
-  if [[ -d "${_repo_root}/dots/.local/share/redshift-os/redshift-store" ]]; then
-    install -dm755 "${pkgdir}/usr/share/redshift-os/redshift-store"
-    cp -r "${_repo_root}/dots/.local/share/redshift-os/redshift-store/main.py" "${pkgdir}/usr/share/redshift-os/redshift-store/"
-    cp -r "${_repo_root}/dots/.local/share/redshift-os/redshift-store/backend" "${pkgdir}/usr/share/redshift-os/redshift-store/"
-    cp -r "${_repo_root}/dots/.local/share/redshift-os/redshift-store/qml" "${pkgdir}/usr/share/redshift-os/redshift-store/"
-    find "${pkgdir}/usr/share/redshift-os/redshift-store" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-    chmod 755 "${pkgdir}/usr/share/redshift-os/redshift-store/main.py"
+  local _repo_root=""
+  if [[ -n "${REDSHIFT_REPO_ROOT:-}" && -f "${REDSHIFT_REPO_ROOT}/dots/.local/bin/redshift-store" ]]; then
+    _repo_root="$(cd "${REDSHIFT_REPO_ROOT}" 2>/dev/null && pwd || true)"
+  elif [[ -n "${startdir:-}" && -f "${startdir}/../../../dots/.local/bin/redshift-store" ]]; then
+    _repo_root="$(cd "${startdir}/../../.." 2>/dev/null && pwd || true)"
+  elif [[ -n "${srcdir:-}" && -f "${srcdir}/../../../dots/.local/bin/redshift-store" ]]; then
+    _repo_root="$(cd "${srcdir}/../../.." 2>/dev/null && pwd || true)"
+  elif [[ -f "${PWD}/../../../dots/.local/bin/redshift-store" ]]; then
+    _repo_root="$(cd "${PWD}/../../.." 2>/dev/null && pwd || true)"
   fi
-  if [[ -f "${_repo_root}/dots/.local/bin/redshift-store" ]]; then
-    install -Dm755 "${_repo_root}/dots/.local/bin/redshift-store" "${pkgdir}/usr/bin/redshift-store"
+
+  if [[ -z "$_repo_root" || ! -d "$_repo_root" ]]; then
+    echo "Error: Could not resolve repository root from startdir ('${startdir:-}') or srcdir ('${srcdir:-}')." >&2
+    return 1
   fi
-  if [[ -f "${_repo_root}/dots/.local/share/applications/redshift-store.desktop" ]]; then
-    install -Dm644 "${_repo_root}/dots/.local/share/applications/redshift-store.desktop" "${pkgdir}/usr/share/applications/redshift-store.desktop"
+
+  local _store_main="${_repo_root}/dots/.local/share/redshift-os/redshift-store/main.py"
+  local _store_bin="${_repo_root}/dots/.local/bin/redshift-store"
+  local _store_desktop="${_repo_root}/dots/.local/share/applications/redshift-store.desktop"
+  local _store_icon="${_repo_root}/dots/.local/share/icons/redshift-store.svg"
+
+  local _missing=()
+  [[ ! -f "$_store_main" ]] && _missing+=("$_store_main")
+  [[ ! -f "$_store_bin" ]] && _missing+=("$_store_bin")
+  [[ ! -f "$_store_desktop" ]] && _missing+=("$_store_desktop")
+  [[ ! -f "$_store_icon" ]] && _missing+=("$_store_icon")
+
+  if (( ${#_missing[@]} > 0 )); then
+    echo "Error: Required Redshift Store source files missing:" >&2
+    printf '  - %s\n' "${_missing[@]}" >&2
+    return 1
   fi
-  if [[ -f "${_repo_root}/dots/.local/share/icons/redshift-store.svg" ]]; then
-    install -Dm644 "${_repo_root}/dots/.local/share/icons/redshift-store.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/redshift-store.svg"
-  fi
+
+  install -dm755 "${pkgdir}/usr/share/redshift-os/redshift-store"
+  cp -r "${_repo_root}/dots/.local/share/redshift-os/redshift-store/main.py" "${pkgdir}/usr/share/redshift-os/redshift-store/"
+  cp -r "${_repo_root}/dots/.local/share/redshift-os/redshift-store/backend" "${pkgdir}/usr/share/redshift-os/redshift-store/"
+  cp -r "${_repo_root}/dots/.local/share/redshift-os/redshift-store/qml" "${pkgdir}/usr/share/redshift-os/redshift-store/"
+  find "${pkgdir}/usr/share/redshift-os/redshift-store" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+  chmod 755 "${pkgdir}/usr/share/redshift-os/redshift-store/main.py"
+
+  install -Dm755 "$_store_bin" "${pkgdir}/usr/bin/redshift-store"
+  install -Dm644 "$_store_desktop" "${pkgdir}/usr/share/applications/redshift-store.desktop"
+  install -Dm644 "$_store_icon" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/redshift-store.svg"
 }

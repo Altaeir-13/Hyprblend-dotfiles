@@ -375,6 +375,11 @@ class StoreController(QObject):
         """Send arbitrary text input to ongoing transaction process."""
         return self._tx_service.send_input(text)
 
+    @pyqtSlot(str, result=bool)
+    def sendInput(self, text: str) -> bool:
+        """Alias for sendTransactionInput for direct QML compatibility."""
+        return self.sendTransactionInput(text)
+
     @pyqtSlot()
     def clearLogs(self) -> None:
         """Clear output log buffer."""

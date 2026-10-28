@@ -1443,17 +1443,18 @@ fi
     bash -n "$pkgbuild_path" || exit 2
     source "$pkgbuild_path"
     [[ "$pkgname" == "illogical-impulse-redshift-store" ]] || exit 3
+    [[ "$pkgver" == "1.0.0" ]] || exit 4
     for req in python-pyqt6 qt6-declarative pacman-contrib appstream polkit polkit-kde-agent; do
         found=false
         for d in "${depends[@]}"; do
             [[ "$d" == "$req" ]] && found=true
         done
-        [[ "$found" == "true" ]] || exit 4
+        [[ "$found" == "true" ]] || exit 5
     done
-    declare -F package >/dev/null || exit 5
-    grep -q "/usr/share/redshift-os/redshift-store" "$pkgbuild_path" || exit 6
-    [[ -f "${REPO_ROOT}/dots/.local/share/icons/redshift-store.svg" ]] || exit 7
-) && pass "PKGBUILD illogical-impulse-redshift-store validado (bash -n, dependências, package() e ícone SVG)" \
+    declare -F package >/dev/null || exit 6
+    grep -q "/usr/share/redshift-os/redshift-store" "$pkgbuild_path" || exit 7
+    [[ -f "${REPO_ROOT}/dots/.local/share/icons/redshift-store.svg" ]] || exit 8
+) && pass "PKGBUILD illogical-impulse-redshift-store validado (bash -n, pkgver 1.0.0, dependências, package() e ícone SVG)" \
   || fail "PKGBUILD illogical-impulse-redshift-store inválido ou incompleto"
 
 # 10.4 Profiles integration verification
@@ -1468,11 +1469,13 @@ fi
 
         found_bin=false
         found_desktop=false
+        found_icon=false
         for target in "${MANAGED_CONFIG_TARGETS[@]}"; do
             [[ "$target" == *"/redshift-store" ]] && found_bin=true
             [[ "$target" == *"/redshift-store.desktop" ]] && found_desktop=true
+            [[ "$target" == *"/redshift-store.svg" ]] && found_icon=true
         done
-        [[ "$found_bin" == "true" && "$found_desktop" == "true" ]] || exit 2
+        [[ "$found_bin" == "true" && "$found_desktop" == "true" && "$found_icon" == "true" ]] || exit 2
     done
 ) && pass "Perfis (minimal, hybrid, complete) integram metapacote e alvos gerenciados da Redshift Store" \
   || fail "Perfis não integram corretamente metapacote ou alvos da Redshift Store"
@@ -1499,13 +1502,15 @@ BACKUP_DIR="$sb_store/home/ii-original-dots-backup" \
 
 assert_file_exists "$sb_store/home/.local/bin/redshift-store" "Instalação Sandbox: redshift-store copiado para ~/.local/bin"
 assert_file_exists "$sb_store/home/.local/share/applications/redshift-store.desktop" "Instalação Sandbox: redshift-store.desktop copiado para ~/.local/share/applications"
+assert_file_exists "$sb_store/home/.local/share/icons/hicolor/scalable/apps/redshift-store.svg" "Instalação Sandbox: ícone copiado para hicolor scalable apps"
+assert_not_exists "$sb_store/home/.local/share/icons/redshift-store.svg" "Instalação Sandbox: ícone duplicado evitado na raiz de icons"
 assert_file_exists "$sb_store/home/.local/share/redshift-os/redshift-store/main.py" "Instalação Sandbox: backend redshift-store copiado para ~/.local/share/redshift-os"
 
 # Verify recorded in installed_listfile and simulate uninstallation removal
 listfile_store="$sb_store/home/.config/illogical-impulse/installed_listfile"
 if [[ -f "$listfile_store" ]]; then
     while IFS= read -r target_path; do
-        if [[ -f "$target_path" && ("$target_path" == *"/redshift-store" || "$target_path" == *"/redshift-store.desktop") ]]; then
+        if [[ -f "$target_path" && ("$target_path" == *"/redshift-store" || "$target_path" == *"/redshift-store.desktop" || "$target_path" == *"/redshift-store.svg") ]]; then
             rm -f "$target_path"
         fi
     done < "$listfile_store"
@@ -1513,6 +1518,7 @@ fi
 
 assert_not_exists "$sb_store/home/.local/bin/redshift-store" "Desinstalação Sandbox: redshift-store removido com base no installed_listfile"
 assert_not_exists "$sb_store/home/.local/share/applications/redshift-store.desktop" "Desinstalação Sandbox: redshift-store.desktop removido com base no installed_listfile"
+assert_not_exists "$sb_store/home/.local/share/icons/hicolor/scalable/apps/redshift-store.svg" "Desinstalação Sandbox: ícone removido com base no installed_listfile"
 
 # 10.7 Automated Headless Self-Test and Python Unit Test Suite
 if selftest_out="$(QT_QPA_PLATFORM=offscreen "${REPO_ROOT}/dots/.local/bin/redshift-store" --mock --self-test 2>&1)"; then
@@ -1528,6 +1534,25 @@ else
     printf "%s\n" "$unittest_out" >&2
     fail "Suíte de testes unitários Python e integração QML (test_redshift_store.py) falhou"
 fi
+
+# 10.8 Launcher Coexistence and Override Logic
+(
+    sb_coexist="$(create_sandbox "redshift-coexist")"
+    user_main="$sb_coexist/home/.local/share/redshift-os/redshift-store/main.py"
+    mkdir -p "$(dirname "$user_main")"
+    echo "print('USER')" > "$user_main"
+
+    res_user="$(HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SOURCE=user "${REPO_ROOT}/dots/.local/bin/redshift-store" 2>&1)"
+    [[ "$res_user" == "USER" ]] || exit 1
+
+    res_repo="$(QT_QPA_PLATFORM=offscreen HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SOURCE=repo "${REPO_ROOT}/dots/.local/bin/redshift-store" --mock --self-test 2>&1)"
+    [[ "$res_repo" == *"AUTOTESTE CONCLUÍDO"* ]] || exit 2
+
+    # Test invalid REDSHIFT_STORE_SOURCE exits with error
+    res_inv="$(HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SOURCE=invalid "${REPO_ROOT}/dots/.local/bin/redshift-store" 2>&1 || true)"
+    [[ "$res_inv" == *"Invalid REDSHIFT_STORE_SOURCE"* ]] || exit 3
+) && pass "Resolução de coexistência e REDSHIFT_STORE_SOURCE no launcher redshift-store" \
+  || fail "Resolução de coexistência ou REDSHIFT_STORE_SOURCE no launcher redshift-store falhou"
 
 printf "\n=============================================================================\n"
 printf "Resumo dos Testes: ${CLR_GREEN}%d aprovados${CLR_RST}, ${CLR_RED}%d falharam${CLR_RST} (total: %d)\n" \

@@ -113,7 +113,8 @@ A Redshift Store opera como interface gráfica sobre ferramentas de gerenciament
 | **Quebra de Sistema por Remoção Acidental** | Pacotes essenciais (`pacman`, `linux`, `glibc`, `systemd`, `hyprland`, `quickshell`, `python-pyqt6`, etc.) constam em `PROTECTED_PACKAGES`. Qualquer solicitação de remoção desses pacotes é bloqueada no backend antes de iniciar qualquer processo. |
 | **Execução de AUR sob Root** | O AUR permite execução de scripts arbitrários de compilação (`PKGBUILD`). O método `ensure_non_root_for_aur()` impede que o `yay` seja executado se o `EUID == 0`. A elevação final para instalação do binário é delegada ao Polkit via `--sudo /usr/bin/pkexec`. |
 | **Conflitos de Concorrência do Pacman** | O estado do lock (`/var/lib/pacman/db.lck`) é verificado antes de iniciar qualquer transação, notificando o usuário com mensagem informativa caso outra ferramenta (ex.: terminal) esteja operando a base de dados. |
-| **Auditoria Visual de PKGBUILDs** | Ao inspecionar pacotes do AUR, a Redshift Store busca e exibe o código do `PKGBUILD` original na aba "Auditoria PKGBUILD" da janela de detalhes, permitindo ao usuário revisar as fontes antes da compilação. |
+| **Auditoria Visual e Interativa de PKGBUILDs (AUR)** | Ao inspecionar pacotes do AUR, a Redshift Store busca e exibe o código do `PKGBUILD` na aba "Auditoria PKGBUILD" da janela de detalhes. Além disso, durante a instalação/atualização via `yay`, os menus interativos `--cleanmenu` e `--diffmenu` são preservados (com `GIT_PAGER=cat` e `PAGER=cat`), permitindo revisar o diff completo no `OperationsLogDrawer` e responder via botões rápidos (`Nenhum (N)`, `Mostrar Todos / Diff (A)`, `Abortar (Ab)`) ou caixa de entrada manual. |
+| **Cancelamento Seguro por Estágio (Sem SIGKILL)** | O cancelamento usa exclusivamente `SIGTERM` nos estágios seguros (`checking_updates`, `authenticating`, `downloading`, `compiling`) e é bloqueado durante modificações críticas do banco (`committing` ou quando `/var/lib/pacman/db.lck` existe). |
 
 ---
 
@@ -165,14 +166,24 @@ A Redshift Store faz parte do núcleo de experiência do Redshift OS e é integr
 O projeto conta com suíte de testes automatizados executáveis sem afetar o sistema hospedeiro:
 
 ### 7.1 Suíte de Testes Unitários e Integração QML (Python)
-Executa 13 baterias completas de testes cobrindo segurança, modelos, catálogo mock e nativo, sincronização Material You, controller e renderização headless de `Main.qml`:
+Executa **18 baterias completas de testes** cobrindo segurança, modelos, catálogo mock e nativo, sincronização Material You (`colors.json` vs `scheme.json` e proteção WCAG contra baixo contraste), menus interativos do AUR (`--cleanmenu`/`--diffmenu`), tratamento de recusa Polkit (`exit 126/127`), controller e renderização headless de `Main.qml`:
 ```bash
 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -p "test_redshift_store.py" -v
 ```
 
 ### 7.2 Suíte Global de Regressão do Repositório
-A suíte em `tests/run-tests.sh` inclui a **Seção 10** dedicada à Redshift Store:
+A suíte em `tests/run-tests.sh` inclui a **Seção 10** dedicada à Redshift Store (totalizando **180 asserções**):
 ```bash
 bash tests/run-tests.sh
 ```
-A suíte valida sintaxe, permissões, conformidade com os perfis declarativos, ciclo de vida completo de instalação e desinstalação em sandbox isolado temporário, garantindo 100% de aprovação.
+A suíte valida sintaxe, permissões, conformidade com os perfis declarativos (`minimal`, `hybrid`, `complete`), coexistência entre `/usr/share` e `~/.local/share` (`REDSHIFT_STORE_SOURCE` e comparação de `mtime`), ciclo de vida completo de instalação e desinstalação em sandbox isolado temporário, garantindo 100% de aprovação.
+
+### 7.3 Diferença entre Verificações Unitárias, Mocks, Renderização Headless, Container Isolado e Validação Operacional
+
+| Nível de Validação | Escopo e Mecanismo | Limitações |
+| :--- | :--- | :--- |
+| **1. Testes Unitários** | Validam funções puras e invariantes de segurança (`validate_package_name`, `PROTECTED_PACKAGES`, `build_safe_*_cmd`, normalização de tokens M3 e cálculo de luminância/contraste WCAG). | Não instanciam processos externos reais (`pacman`/`yay`) nem janela gráfica. |
+| **2. Simulações Mock (`--mock` / `REDSHIFT_STORE_MOCK=1`)** | Simulam determinísticamente o fluxo multi-estágio (`downloading` -> `compiling` -> `committing` -> `success`) via `QTimer` sem tocar no sistema hospedeiro. | Não exercitam pipes reais de `stdout`/`stderr`/`stdin` do `QProcess` nem banco ALPM real. |
+| **3. Renderização Headless (`QT_QPA_PLATFORM=offscreen`)** | Carrega a árvore `QQmlApplicationEngine` (`Main.qml`, páginas, diálogos e `XdgIconImageProvider`) em buffer offscreen para CI/CD sem servidor gráfico. | Não valida composição Wayland real no Hyprland nem captura de eventos visuais de janela. |
+| **4. Integração Real em Container Arch Isolado (`bwrap` + `makepkg` + `pacman`)** | Compila pacotes `.pkg.tar.zst` reais via `makepkg`, cria repositório local via `repo-add` e executa `TransactionService(mock_mode=False)` com `/usr/bin/pacman` real dentro de namespace isolado (`bubblewrap`), validando instalação (`-S`/`-U`), atualização, remoção (`-R`), prompts `[Y/n]` via `stdin`, `db.lck` e `./setup install-files` nos 3 perfis. | Isola o `RootDir`/`DBPath` para proteger a máquina hospedeira. |
+| **5. Validação Operacional Wayland/Hyprland (`QT_QPA_PLATFORM=wayland`)** | Executa a aplicação real na sessão Hyprland (`WAYLAND_DISPLAY=wayland-1`) contra `/var/lib/pacman/local`, `pacman -Si`, `checkupdates`, `yay -Qua`, RPC AUR v5 e `matugen` em tempo real via `QFileSystemWatcher`. | Operações destrutivas no host permanecem protegidas e exigem confirmação explícita do usuário no Polkit/console. |

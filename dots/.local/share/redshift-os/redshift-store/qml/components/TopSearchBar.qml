@@ -130,6 +130,7 @@ Rectangle {
                 Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    clip: true
 
                     // Placeholder
                     Text {
@@ -152,6 +153,7 @@ Rectangle {
                         font.pixelSize: 13
                         color: root.getToken("onSurface", "#e6e1e1")
                         selectByMouse: true
+                        clip: true
                         selectionColor: root.getToken("primaryContainer", "#4f378b")
                         selectedTextColor: root.getToken("onPrimaryContainer", "#eaddff")
 
