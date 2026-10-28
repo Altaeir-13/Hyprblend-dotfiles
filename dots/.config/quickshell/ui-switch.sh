@@ -243,6 +243,21 @@ to_caelestia() {
     # Sincronizar tema antes de matar o frontend atual.
     "$BRIDGE"
 
+    # Limpar eventuais overrides de Game Mode do end-4 para não interferir no Caelestia
+    local end4_cfg="$XDG_CONFIG_HOME/quickshell/ii/scripts/hyprland/hyprconfigurator.py"
+    local shell_overrides="$XDG_CONFIG_HOME/hypr/hyprland/shellOverrides/main.lua"
+    if [[ -f "$end4_cfg" ]] && [[ -f "$shell_overrides" ]]; then
+        python3 "$end4_cfg" --file "$shell_overrides" \
+            --reset animations:enabled \
+            --reset decoration:shadow:enabled \
+            --reset decoration:blur:enabled \
+            --reset general:gaps_in \
+            --reset general:gaps_out \
+            --reset general:border_size \
+            --reset decoration:rounding \
+            --reset general:allow_tearing >/dev/null 2>&1 || true
+    fi
+
     qs kill -c ii >/dev/null 2>&1 || true
     sleep "$UI_SWITCH_WAIT_SLEEP"
 
@@ -267,6 +282,11 @@ to_caelestia() {
 
 to_end4() {
     echo "Caelestia -> end-4"
+
+    # Desativar Game Mode do Caelestia se ativo para não deixar gaps zerados no compositor
+    if [[ -x "$CAEL_CONFIG/scripts/gamemode.sh" ]]; then
+        "$CAEL_CONFIG/scripts/gamemode.sh" off >/dev/null 2>&1 || true
+    fi
 
     qs kill -c caelestia-hybrid >/dev/null 2>&1 || true
     stop_video_bridge
