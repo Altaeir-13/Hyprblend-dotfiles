@@ -1,27 +1,27 @@
-# Hyprland Hybrid Rice
+# Redshift OS — Hyprland Hybrid Rice
 
-> **Ambiente Wayland híbrido moderno, fluido e esteticamente refinado, integrando o poder do [end-4/illogical-impulse](https://github.com/end-4/dots-hyprland) com a sofisticação do [Caelestia Shell](https://github.com/caelestia-dots/shell).**
+> **Ambiente Wayland híbrido moderno, fluido e esteticamente refinado, integrando a identidade visual Redshift OS com a flexibilidade do [end-4/illogical-impulse](https://github.com/end-4/dots-hyprland) e a sofisticação do [Caelestia Shell](https://github.com/caelestia-dots/shell).**
 
 [![Arch Linux](https://img.shields.io/badge/Arch_Linux-Officially_Supported-1793D1?logo=arch-linux&logoColor=white)](https://archlinux.org)
 [![Hyprland](https://img.shields.io/badge/Compositor-Hyprland-00c8ff?logo=wayland&logoColor=white)](https://hyprland.org)
 [![Quickshell](https://img.shields.io/badge/Shell-Quickshell_Qt6-41CD52?logo=qt&logoColor=white)](https://quickshell.outfoxxed.me)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](./LICENSE)
-[![Release: v0.1.0-beta](https://img.shields.io/badge/Release-v0.1.0--beta-green.svg)](https://github.com/Altaeir-13/dots-hyprland/releases/tag/v0.1.0-beta)
+[![Release: v0.1.0-beta](https://img.shields.io/badge/Release-v0.1.0--beta-green.svg)](https://github.com/Altaeir-13/RedshiftOS-dotfiles/releases/tag/v0.1.0-beta)
 
 ---
 
 ## Visão Geral
 
 > [!NOTE]
-> **Versão Oficial:** Esta é a versão **`v0.1.0-beta`** do Hyprland Hybrid Rice na branch `main`, integrando os frontends end-4 (illogical-impulse) e Caelestia Shell com testes de reprodução automatizados e instalador multiperfil para Arch Linux.
+> **Versão Oficial:** Esta é a versão **`v0.1.0-beta`** do Redshift OS (Hyprland Hybrid Rice) na branch `main`, integrando os frontends end-4 (illogical-impulse) e Caelestia Shell com testes de reprodução automatizados, instalador multiperfil para Arch Linux e identidade visual completa.
 
-O **Hyprland Hybrid Rice** une o melhor de dois ecossistemas visuais líderes para Hyprland em um ambiente único e coeso:
-- **end-4 (illogical-impulse):** Rica central de controle (`StatusCenter`), widgets funcionais, extração dinâmica de cores Material You e ampla compatibilidade.
-- **Caelestia Shell:** Design escultural em Material 3, animações baseadas em física vetorial, shaders fluidos e suporte avançado a papéis de parede animados.
+O **Redshift OS (Hyprland Hybrid Rice)** une o melhor de dois ecossistemas visuais líderes para Hyprland em um ambiente único e coeso:
+- **end-4 (illogical-impulse):** Rica central de controle (`StatusCenter`), widgets funcionais, barras horizontais e verticais com controles completos, extração dinâmica de cores Material You e ampla compatibilidade.
+- **Caelestia Shell:** Design escultural em Material 3, animações baseadas em física vetorial, shaders fluidos, seletor de paletas Material You e suporte avançado a papéis de parede animados.
 
 A alternância entre as duas interfaces ocorre em **tempo de execução com um único clique ou atalho**, preservando o estado do compositor, a paleta de cores ativas e os atalhos de hardware.
 
-**Release:** [`v0.1.0-beta`](https://github.com/Altaeir-13/dots-hyprland/releases/tag/v0.1.0-beta) · **Repositório:** <https://github.com/Altaeir-13/dots-hyprland> · **Licença:** [GPL-3.0](./LICENSE)
+**Release:** [`v0.1.0-beta`](https://github.com/Altaeir-13/RedshiftOS-dotfiles/releases/tag/v0.1.0-beta) · **Repositório:** <https://github.com/Altaeir-13/RedshiftOS-dotfiles> · **Licença:** [GPL-3.0](./LICENSE)
 
 ---
 
@@ -43,11 +43,16 @@ A alternância entre as duas interfaces ocorre em **tempo de execução com um �
 
 ## Características Principais
 
+- 🌟 **Identidade Visual Redshift OS:** Símbolo da estrela em espiral flamejante distribuído como SVG vetorial e PNGs de alta definição em `~/.local/share/redshift-os/icons/`, perfeitamente integrado às barras de tarefas (superior, esquerda e direita), tela de bloqueio e terminal (Fastfetch).
+- 🔄 **Rotação GPU Nativa e Contínua:** Rotação suave de 360° no símbolo nos dois frontends (end-4 e Caelestia) via `RotationAnimation` nativo do Qt6/QML (8 segundos por volta no sentido horário), linear, sem travamentos e com pausa automática ao ocultar o componente.
+- 🎨 **Tingimento Dinâmico de Cores:** O símbolo do Redshift OS adapta sua cor dinamicamente conforme o papel de parede e o esquema selecionado (`m3primary` no Caelestia e `colPrimary` no end-4).
+- 🎛️ **Seletor de Variantes Material You no Caelestia:** Interface nativa em `Settings > Wallpaper & style` para seleção entre Auto, Content, Expressive, Fidelity, Fruit Salad, Monochrome, Neutral, Rainbow, Tonal Spot e Vibrant com persistência bidirecional.
+- 🎮 **Game Mode Integrado:** Ativação instantânea de modo jogo que salva atomicamente as configurações, desativa transições, remove cantos arredondados, gaps e bordas de janelas para latência ultrabaixa com restauração fiel do estado anterior.
 - 🔄 **Dual Frontend em Tempo Real:** Alterne dinamicamente entre `end-4` e `Caelestia` via botão na barra ou pelo comando `ui-switch.sh`.
 - 🛡️ **Mecanismo de Rollback da Interface:** Se o frontend secundário apresentar qualquer falha de inicialização ou crash de dependência, o sistema reverte automaticamente para a interface ativa anterior.
 - 🎨 **Ponte de Cores Material You:** A paleta de 49 cores gerada pelo `matugen` a partir do seu wallpaper no end-4 é automaticamente traduzida e sincronizada para o `scheme.json` do Caelestia.
 - 🎬 **Suporte a Wallpapers em Vídeo e GIF:** Integração automática com `mpvpaper` acelerado por hardware para arquivos `.mp4`, `.webm` e `.gif`.
-- 🔒 **Dispatcher Inteligente de Bloqueio (`rice-lock`):** Gerencia a tela de bloqueio respeitando preferências locais (`hyprlock` nativo ou lockers integrados do Quickshell).
+- 🔒 **Dispatcher Inteligente de Bloqueio (`rice-lock`):** Gerencia a tela de bloqueio respeitando preferências locais (`hyprlock` nativo com o emblema Redshift OS centralizado ou lockers integrados do Quickshell).
 - ⌨️ **Layout de Teclado `us` / `br`:** Alternância rápida entre teclados com atalhos de brilho e áudio unificados.
 - 📦 **Perfis Declarativos de Instalação:** Instale exatamente o que precisa através dos perfis `minimal`, `hybrid` ou `complete`.
 
@@ -97,14 +102,14 @@ A alternância entre as duas interfaces ocorre em **tempo de execução com um �
 Clone o repositório com todos os submódulos necessários a partir da branch principal (`main`):
 
 ```bash
-git clone --recursive https://github.com/Altaeir-13/dots-hyprland.git ~/dots-hyprland
-cd ~/dots-hyprland
+git clone --recursive https://github.com/Altaeir-13/RedshiftOS-dotfiles.git ~/RedshiftOS-dotfiles
+cd ~/RedshiftOS-dotfiles
 ```
 
 Para instalar exatamente a versão publicada (recomendado para reproduzibilidade), use a tag da release:
 ```bash
-git clone --recursive --branch v0.1.0-beta https://github.com/Altaeir-13/dots-hyprland.git ~/dots-hyprland
-cd ~/dots-hyprland
+git clone --recursive --branch v0.1.0-beta https://github.com/Altaeir-13/RedshiftOS-dotfiles.git ~/RedshiftOS-dotfiles
+cd ~/RedshiftOS-dotfiles
 ```
 > O `git` precisa estar instalado antes do clone (`sudo pacman -S --needed git`). O instalador instala os demais pré-requisitos (como `rsync`) no Arch Linux.
 
@@ -183,7 +188,7 @@ O dispatcher detecta qual interface está em execução e aciona a rotina corret
 ### Atualizando as Configurações
 Para atualizar o rice preservando customizações locais:
 ```bash
-cd ~/dots-hyprland
+cd ~/RedshiftOS-dotfiles
 git pull
 ./setup install-files
 ```
