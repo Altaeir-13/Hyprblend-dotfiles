@@ -85,4 +85,7 @@ case "${SKIP_HYPRLAND}" in
 esac
 
 install_file "dots/.local/share/icons/illogical-impulse.svg" "${XDG_DATA_HOME}"/icons/illogical-impulse.svg
+install_file "dots/.local/share/icons/redshift-symbolic.svg" "${XDG_DATA_HOME}"/icons/redshift-symbolic.svg
+install_file "dots/.local/share/icons/redshift-symbolic-compact.svg" "${XDG_DATA_HOME}"/icons/redshift-symbolic-compact.svg
+install_dir__sync "dots/.local/share/redshift-os" "${XDG_DATA_HOME}"/redshift-os
 install_file "dots/.local/bin/rice-lock" "${XDG_BIN_HOME}"/rice-lock
