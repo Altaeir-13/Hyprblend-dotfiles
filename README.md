@@ -54,7 +54,8 @@ A alternância entre as duas interfaces ocorre em **tempo de execução com um �
 - 🎬 **Suporte a Wallpapers em Vídeo e GIF:** Integração automática com `mpvpaper` acelerado por hardware para arquivos `.mp4`, `.webm` e `.gif`.
 - 🔒 **Dispatcher Inteligente de Bloqueio (`rice-lock`):** Gerencia a tela de bloqueio respeitando preferências locais (`hyprlock` nativo com o emblema Redshift OS centralizado ou lockers integrados do Quickshell).
 - ⌨️ **Layout de Teclado `us` / `br`:** Alternância rápida entre teclados com atalhos de brilho e áudio unificados.
-- 📦 **Perfis Declarativos de Instalação:** Instale exatamente o que precisa através dos perfis `minimal`, `hybrid` ou `complete`.
+- 🛍️ **Redshift Store Nativa:** Central de aplicativos em Qt6/QML integrada nativamente ao Arch Linux (`pacman`, `yay`, AUR e AppStream), com atualização reativa aos 49 tokens Material You do sistema e guardrails de segurança avançados.
+- 📦 **Perfis Declarativos de Instalação:** Instale exatamente o que precisa através dos perfis `minimal`, `hybrid` ou `complete` (todos integrando a Redshift Store).
 
 ---
 
@@ -192,6 +193,25 @@ cd ~/RedshiftOS-dotfiles
 git pull
 ./setup install-files
 ```
+
+---
+
+## Redshift Store — Central de Aplicativos
+
+O Redshift OS inclui a **Redshift Store**, uma central moderna de software desenvolvida em **Qt6/QML e PyQt6**, inspirada na usabilidade da Microsoft Store e profundamente integrada ao ecossistema Arch Linux:
+
+- **Busca Unificada e Enriquecida:** Pesquise aplicativos oficiais via `pacman`, descubra pacotes do AUR via API RPC v5 e visualize descrições detalhadas, ícones e metadados providos pelo AppStream.
+- **Sincronização Dinâmica com Material You:** Adapta automaticamente suas cores aos 49 tokens do tema do sistema (gerado pelo `matugen` no end-4 ou Caelestia) via inotify (`QFileSystemWatcher`).
+- **Segurança de Nível de Sistema Operacional:** Bloqueia a remoção de pacotes essenciais do sistema (`pacman`, `linux`, `glibc`, `systemd`, `hyprland`, `quickshell`), valida entradas contra injeção de parâmetros, impede a compilação do AUR sob root (`EUID != 0`) e delega privilégios ao Polkit (`pkexec`).
+- **Acesso Rápido:**
+  ```bash
+  redshift-store                  # Abrir a loja
+  redshift-store --page updates   # Abrir diretamente na aba de atualizações
+  redshift-store --page installed # Abrir na lista de pacotes instalados
+  ```
+- **Documentação Detalhada:**
+  - Guia Completo do Usuário: [docs/REDSHIFT_STORE.md](./docs/REDSHIFT_STORE.md)
+  - Arquitetura de Software e Modelos: [docs/REDSHIFT_STORE_ARCHITECTURE.md](./docs/REDSHIFT_STORE_ARCHITECTURE.md)
 
 ---
 
