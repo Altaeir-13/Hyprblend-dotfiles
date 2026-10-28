@@ -1,0 +1,24 @@
+[Desktop Entry]
+Type=Application
+Name=Redshift Store
+GenericName=Software Center
+GenericName[pt_BR]=Central de Aplicativos
+Comment=Discover, install, and update Arch Linux & AUR packages on Redshift OS
+Comment[pt_BR]=Descubra, instale e atualize aplicativos oficiais e do AUR no Redshift OS
+Exec=redshift-store
+Icon=redshift-store
+Terminal=false
+Categories=System;PackageManager;Settings;
+Keywords=store;pacman;yay;aur;packages;software;redshift;loja;aplicativos;
+StartupWMClass=redshift-store
+Actions=Updates;Installed;
+
+[Desktop Action Updates]
+Name=Verificar Atualizações
+Name[en_US]=Check for Updates
+Exec=redshift-store --page updates
+
+[Desktop Action Installed]
+Name=Pacotes Instalados
+Name[en_US]=Installed Packages
+Exec=redshift-store --page installed

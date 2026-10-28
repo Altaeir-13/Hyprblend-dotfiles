@@ -1415,6 +1415,120 @@ for d in dist-fedora dist-gentoo dist-nix dist-arch; do
     assert_file_exists "${REPO_ROOT}/sdata/${d}/install-deps.sh" "Distro: implementação herdada sdata/${d} preservada"
 done
 
+printf "\n${CLR_CYAN}=== 10. Redshift Store (Packaging, Profiles, Sandbox Install & Python/QML Test Suite) ===${CLR_RST}\n"
+
+# 10.1 Launcher script verification
+if [[ -x "${REPO_ROOT}/dots/.local/bin/redshift-store" ]]; then
+    pass "Launcher dots/.local/bin/redshift-store existe e possui permissão de execução (+x)"
+else
+    fail "Launcher dots/.local/bin/redshift-store ausente ou sem permissão de execução"
+fi
+
+# 10.2 Desktop Entry validation
+(
+    desktop_file="${REPO_ROOT}/dots/.local/share/applications/redshift-store.desktop"
+    [[ -f "$desktop_file" ]] || exit 1
+    grep -q "^Type=Application" "$desktop_file" || exit 2
+    grep -q "^Exec=redshift-store" "$desktop_file" || exit 3
+    grep -q "^Actions=Updates;Installed;" "$desktop_file" || exit 4
+    grep -q "^\[Desktop Action Updates\]" "$desktop_file" || exit 5
+    grep -q "^\[Desktop Action Installed\]" "$desktop_file" || exit 6
+) && pass "Arquivo .desktop redshift-store.desktop validado (chaves XDG, Exec e Actions)" \
+  || fail "Arquivo .desktop redshift-store.desktop inválido ou ausente"
+
+# 10.3 PKGBUILD syntax, dependency, and package() function audit
+(
+    pkgbuild_path="${REPO_ROOT}/sdata/dist-arch/illogical-impulse-redshift-store/PKGBUILD"
+    [[ -f "$pkgbuild_path" ]] || exit 1
+    bash -n "$pkgbuild_path" || exit 2
+    source "$pkgbuild_path"
+    [[ "$pkgname" == "illogical-impulse-redshift-store" ]] || exit 3
+    for req in python-pyqt6 qt6-declarative pacman-contrib appstream polkit polkit-kde-agent; do
+        found=false
+        for d in "${depends[@]}"; do
+            [[ "$d" == "$req" ]] && found=true
+        done
+        [[ "$found" == "true" ]] || exit 4
+    done
+    declare -F package >/dev/null || exit 5
+    grep -q "/usr/share/redshift-os/redshift-store" "$pkgbuild_path" || exit 6
+    [[ -f "${REPO_ROOT}/dots/.local/share/icons/redshift-store.svg" ]] || exit 7
+) && pass "PKGBUILD illogical-impulse-redshift-store validado (bash -n, dependências, package() e ícone SVG)" \
+  || fail "PKGBUILD illogical-impulse-redshift-store inválido ou incompleto"
+
+# 10.4 Profiles integration verification
+(
+    for prof in minimal hybrid complete; do
+        source "${REPO_ROOT}/sdata/profiles/${prof}.conf"
+        found_meta=false
+        for pkg in "${ARCH_METAPKGS[@]}"; do
+            [[ "$pkg" == *"illogical-impulse-redshift-store"* ]] && found_meta=true
+        done
+        [[ "$found_meta" == "true" ]] || exit 1
+
+        found_bin=false
+        found_desktop=false
+        for target in "${MANAGED_CONFIG_TARGETS[@]}"; do
+            [[ "$target" == *"/redshift-store" ]] && found_bin=true
+            [[ "$target" == *"/redshift-store.desktop" ]] && found_desktop=true
+        done
+        [[ "$found_bin" == "true" && "$found_desktop" == "true" ]] || exit 2
+    done
+) && pass "Perfis (minimal, hybrid, complete) integram metapacote e alvos gerenciados da Redshift Store" \
+  || fail "Perfis não integram corretamente metapacote ou alvos da Redshift Store"
+
+# 10.5 Installer and uninstaller script references
+(
+    grep -q "redshift-store" "${REPO_ROOT}/sdata/dist-arch/uninstall-deps.sh" || exit 1
+    grep -q "redshift-store" "${REPO_ROOT}/sdata/subcmd-install/3.files-legacy.sh" || exit 2
+) && pass "Integração do desinstalador (uninstall-deps.sh) e arquivos legados (3.files-legacy.sh)" \
+  || fail "Referências da Redshift Store ausentes em uninstall-deps.sh ou 3.files-legacy.sh"
+
+# 10.6 Sandbox installation and uninstallation lifecycle
+sb_store="$(create_sandbox "redshift-store-lifecycle")"
+PATH="$sb_store/bin:$PATH" \
+MOCK_STATE_DIR="$sb_store/mock-state" \
+HOME="$sb_store/home" \
+XDG_CONFIG_HOME="$sb_store/home/.config" \
+XDG_DATA_HOME="$sb_store/home/.local/share" \
+XDG_STATE_HOME="$sb_store/home/.local/state" \
+XDG_CACHE_HOME="$sb_store/home/.cache" \
+XDG_BIN_HOME="$sb_store/home/.local/bin" \
+BACKUP_DIR="$sb_store/home/ii-original-dots-backup" \
+./setup install-files -p hybrid -f >/dev/null
+
+assert_file_exists "$sb_store/home/.local/bin/redshift-store" "Instalação Sandbox: redshift-store copiado para ~/.local/bin"
+assert_file_exists "$sb_store/home/.local/share/applications/redshift-store.desktop" "Instalação Sandbox: redshift-store.desktop copiado para ~/.local/share/applications"
+assert_file_exists "$sb_store/home/.local/share/redshift-os/redshift-store/main.py" "Instalação Sandbox: backend redshift-store copiado para ~/.local/share/redshift-os"
+
+# Verify recorded in installed_listfile and simulate uninstallation removal
+listfile_store="$sb_store/home/.config/illogical-impulse/installed_listfile"
+if [[ -f "$listfile_store" ]]; then
+    while IFS= read -r target_path; do
+        if [[ -f "$target_path" && ("$target_path" == *"/redshift-store" || "$target_path" == *"/redshift-store.desktop") ]]; then
+            rm -f "$target_path"
+        fi
+    done < "$listfile_store"
+fi
+
+assert_not_exists "$sb_store/home/.local/bin/redshift-store" "Desinstalação Sandbox: redshift-store removido com base no installed_listfile"
+assert_not_exists "$sb_store/home/.local/share/applications/redshift-store.desktop" "Desinstalação Sandbox: redshift-store.desktop removido com base no installed_listfile"
+
+# 10.7 Automated Headless Self-Test and Python Unit Test Suite
+if selftest_out="$(QT_QPA_PLATFORM=offscreen "${REPO_ROOT}/dots/.local/bin/redshift-store" --mock --self-test 2>&1)"; then
+    pass "Autoteste headless (redshift-store --mock --self-test) executado com status 0"
+else
+    printf "%s\n" "$selftest_out" >&2
+    fail "Autoteste headless (redshift-store --mock --self-test) falhou"
+fi
+
+if unittest_out="$(QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s "${REPO_ROOT}/tests" -p "test_redshift_store.py" 2>&1)"; then
+    pass "Suíte de testes unitários Python e integração QML (test_redshift_store.py) aprovada"
+else
+    printf "%s\n" "$unittest_out" >&2
+    fail "Suíte de testes unitários Python e integração QML (test_redshift_store.py) falhou"
+fi
+
 printf "\n=============================================================================\n"
 printf "Resumo dos Testes: ${CLR_GREEN}%d aprovados${CLR_RST}, ${CLR_RED}%d falharam${CLR_RST} (total: %d)\n" \
     "$PASS_COUNT" "$FAIL_COUNT" "$TOTAL_COUNT"

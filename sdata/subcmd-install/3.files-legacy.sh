@@ -87,5 +87,9 @@ esac
 install_file "dots/.local/share/icons/illogical-impulse.svg" "${XDG_DATA_HOME}"/icons/illogical-impulse.svg
 install_file "dots/.local/share/icons/redshift-symbolic.svg" "${XDG_DATA_HOME}"/icons/redshift-symbolic.svg
 install_file "dots/.local/share/icons/redshift-symbolic-compact.svg" "${XDG_DATA_HOME}"/icons/redshift-symbolic-compact.svg
+install_file "dots/.local/share/icons/redshift-store.svg" "${XDG_DATA_HOME}"/icons/redshift-store.svg
+install_file "dots/.local/share/icons/redshift-store.svg" "${XDG_DATA_HOME}"/icons/hicolor/scalable/apps/redshift-store.svg
+install_file "dots/.local/share/applications/redshift-store.desktop" "${XDG_DATA_HOME}"/applications/redshift-store.desktop
 install_dir__sync "dots/.local/share/redshift-os" "${XDG_DATA_HOME}"/redshift-os
 install_file "dots/.local/bin/rice-lock" "${XDG_BIN_HOME}"/rice-lock
+install_file "dots/.local/bin/redshift-store" "${XDG_BIN_HOME}"/redshift-store

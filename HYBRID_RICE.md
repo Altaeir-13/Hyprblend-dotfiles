@@ -70,7 +70,18 @@ Este repositório oficial do **Redshift OS** (<https://github.com/Altaeir-13/Red
 
 ---
 
-## 5. Perfis do Instalador (`./setup`)
+## 5. Redshift Store (Central de Aplicativos)
+
+O Redshift OS inclui a **Redshift Store** (`~/.local/bin/redshift-store`), uma central gráfica de software em **Qt6/QML e PyQt6** projetada para o ecossistema Arch Linux:
+- **Catálogo Unificado:** Repositórios oficiais (`pacman`), AUR (`yay` / API RPC v5) e metadados AppStream.
+- **Sincronização de Cores:** Responde dinamicamente aos 49 tokens Material 3 do tema ativo (`matugen` e `Caelestia scheme.json`).
+- **Segurança Nativa:** Proteção contra remoção de pacotes vitais (`hyprland`, `quickshell`, `pacman`, `linux`, `glibc`), sanitização de argumentos e isolamento de root no AUR.
+- **Instalação:** Integrada nativamente aos três perfis (`minimal`, `hybrid` e `complete`) via metapacote `illogical-impulse-redshift-store`.
+- **Documentação:** Veja [docs/REDSHIFT_STORE.md](./docs/REDSHIFT_STORE.md) para o guia completo e [docs/REDSHIFT_STORE_ARCHITECTURE.md](./docs/REDSHIFT_STORE_ARCHITECTURE.md) para especificações arquiteturais.
+
+---
+
+## 6. Perfis do Instalador (`./setup`)
 
 O script `./setup` suporta três perfis declarativos (definidos em [`sdata/profiles/`](./sdata/profiles)):
 
@@ -79,7 +90,7 @@ O script `./setup` suporta três perfis declarativos (definidos em [`sdata/profi
 ./setup install --profile hybrid --dry-run
 
 # Instalação por perfil
-./setup install --profile minimal   # Apenas Hyprland + end-4 (ii)
-./setup install --profile hybrid    # Hyprland + end-4 + Caelestia Hybrid (padrão)
-./setup install --profile complete  # Hybrid + apps opcionais (easyeffects, fish, foot, kitty, starship, plasma-browser-integration)
+./setup install --profile minimal   # Apenas Hyprland + end-4 (ii) + Redshift Store
+./setup install --profile hybrid    # Hyprland + end-4 + Caelestia Hybrid + Redshift Store (padrão)
+./setup install --profile complete  # Hybrid + Redshift Store + apps opcionais (easyeffects, fish, foot, kitty, starship, plasma-browser-integration)
 ```
