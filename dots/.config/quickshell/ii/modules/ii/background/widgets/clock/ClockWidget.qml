@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Qt5Compat.GraphicalEffects
 import qs
 import qs.services
 import qs.modules.common
@@ -39,6 +40,46 @@ AbstractBackgroundWidget {
         id: contentColumn
         anchors.centerIn: parent
         spacing: 10
+
+        FadeLoader {
+            id: lockLogoLoader
+            anchors.horizontalCenter: parent.horizontalCenter
+            shown: GlobalStates.screenLocked
+            fade: true
+            sourceComponent: Item {
+                width: 190
+                height: 190
+                anchors.horizontalCenter: parent.horizontalCenter
+                transformOrigin: Item.Center
+
+                RotationAnimation on rotation {
+                    from: 0
+                    to: 360
+                    duration: 8000
+                    direction: RotationAnimation.Clockwise
+                    loops: Animation.Infinite
+                    running: GlobalStates.screenLocked
+                }
+
+                Image {
+                    id: lockEmblem
+                    anchors.fill: parent
+                    source: "file://" + Quickshell.env("HOME") + "/.local/share/redshift-os/icons/redshift-symbolic-compact.svg"
+                    fillMode: Image.PreserveAspectFit
+                    sourceSize.width: 512
+                    sourceSize.height: 512
+                    mipmap: true
+                    smooth: true
+                    visible: false
+                }
+
+                ColorOverlay {
+                    anchors.fill: lockEmblem
+                    source: lockEmblem
+                    color: Appearance.colors.colPrimary
+                }
+            }
+        }
 
         FadeLoader {
             id: cookieClockLoader

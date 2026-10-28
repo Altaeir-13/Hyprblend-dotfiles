@@ -1,11 +1,7 @@
-pragma ComponentBehavior: Bound
-
 import QtQuick
-import M3Shapes
 import Caelestia.Config
 import qs.components
 import qs.components.effects
-import qs.components.images
 import qs.services
 import qs.utils
 
@@ -13,44 +9,45 @@ Item {
     id: root
 
     required property int centerWidth
-    readonly property color bgColour: Colours.tPalette.m3surfaceContainerHighest
+    // Reference lock screen visual size: ~160-240px in Full HD
+    readonly property real visualSize: Math.round(Math.min(240, Math.max(160, centerWidth * 0.42)))
 
-    implicitWidth: Math.round(centerWidth * 0.7)
-    implicitHeight: {
-        shape.height; // Force update when shape height changes
-        return shape.pathBounds().height;
-    }
+    implicitWidth: root.visualSize
+    implicitHeight: root.visualSize
 
-    MaterialShape {
-        id: shape
-
+    Item {
         anchors.centerIn: parent
-        implicitSize: root.implicitWidth
+        width: root.visualSize
+        height: root.visualSize
+        transformOrigin: Item.Center
 
-        shape: MaterialShape.ClamShell
-        color: Qt.alpha(root.bgColour, 1)
-        opacity: root.bgColour.a
-        layer.enabled: true
-    }
+        RotationAnimation on rotation {
+            from: 0
+            to: 360
+            duration: 8000
+            direction: RotationAnimation.Clockwise
+            loops: Animation.Infinite
+            running: root.visible
+        }
 
-    MaterialIcon {
-        anchors.centerIn: parent
+        Image {
+            id: lockEmblem
+            anchors.centerIn: parent
+            width: root.visualSize
+            height: root.visualSize
+            source: "file://" + Paths.home + "/.local/share/redshift-os/icons/redshift-symbolic-compact.svg"
+            fillMode: Image.PreserveAspectFit
+            sourceSize.width: 512
+            sourceSize.height: 512
+            mipmap: true
+            smooth: true
+            asynchronous: true
+            transformOrigin: Item.Center
 
-        text: "person"
-        color: Colours.palette.m3onSurfaceVariant
-        fontStyle: Tokens.font.icon.size(root.centerWidth / 4).build()
-        visible: pfp.status !== Image.Ready
-    }
-
-    CachingImage {
-        id: pfp
-
-        anchors.fill: shape
-        path: `${Paths.home}/.face`
-
-        layer.enabled: true
-        layer.effect: Mask {
-            maskSource: shape
+            layer.enabled: true
+            layer.effect: Colouriser {
+                colorizationColor: Colours.palette.m3primary
+            }
         }
     }
 }

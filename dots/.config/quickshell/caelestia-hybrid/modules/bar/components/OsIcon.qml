@@ -8,40 +8,55 @@ import qs.utils
 Item {
     id: root
 
-    implicitWidth: Math.round(Tokens.font.body.large.pointSize * 1.2)
-    implicitHeight: Math.round(Tokens.font.body.large.pointSize * 1.2)
+    // Bar clickable area reference: 36-44px
+    implicitWidth: Tokens.sizes.bar.innerWidth
+    implicitHeight: Tokens.sizes.bar.innerWidth
 
     MouseArea {
+        id: mouseArea
         anchors.fill: parent
         cursorShape: Qt.PointingHandCursor
+        hoverEnabled: true
         onClicked: {
             const screenState = ShellState.forActive();
             screenState.launcher = !screenState.launcher;
         }
     }
 
-    Loader {
-        asynchronous: true
+    Item {
+        id: iconWrapper
         anchors.centerIn: parent
-        sourceComponent: SysInfo.isDefaultLogo ? caelestiaLogo : distroIcon
-    }
+        width: 28
+        height: 28
+        transformOrigin: Item.Center
 
-    Component {
-        id: caelestiaLogo
-
-        Logo {
-            implicitWidth: Math.round(Tokens.font.body.large.pointSize * 1.6)
-            implicitHeight: Math.round(Tokens.font.body.large.pointSize * 1.6)
+        RotationAnimation on rotation {
+            from: 0
+            to: 360
+            duration: 8000
+            direction: RotationAnimation.Clockwise
+            loops: Animation.Infinite
+            running: root.visible
         }
-    }
 
-    Component {
-        id: distroIcon
+        Image {
+            id: emblemImage
+            anchors.centerIn: parent
+            width: 28
+            height: 28
+            source: "file://" + Paths.home + "/.local/share/redshift-os/icons/redshift-symbolic-compact.svg"
+            fillMode: Image.PreserveAspectFit
+            sourceSize.width: 64
+            sourceSize.height: 64
+            mipmap: true
+            smooth: true
+            asynchronous: true
+            transformOrigin: Item.Center
 
-        ColouredIcon {
-            source: SysInfo.osLogo
-            implicitSize: Math.round(Tokens.font.body.large.pointSize * 1.2)
-            colour: Colours.palette.m3tertiary
+            layer.enabled: true
+            layer.effect: Colouriser {
+                colorizationColor: Colours.palette.m3primary
+            }
         }
     }
 }
