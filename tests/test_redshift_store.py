@@ -178,25 +178,41 @@ class TestSecurityGuardrails(unittest.TestCase):
             cmd_sysup = build_safe_pacman_sysupgrade_cmd()
             self.assertEqual(cmd_sysup[:3], ["/usr/bin/pkexec", "/usr/bin/pacman", "-Syu"])
 
-            # 4. Yay install
+            # 4. Yay install (H-BACK1: --cleanmenu and --diffmenu preserved, never --answerclean/--answerdiff None)
             cmd_yay_inst = build_safe_yay_install_cmd(["visual-studio-code-bin"])
             self.assertEqual(cmd_yay_inst[0], "/usr/bin/yay")
             self.assertIn("--sudo", cmd_yay_inst)
             sudo_idx = cmd_yay_inst.index("--sudo")
             self.assertEqual(cmd_yay_inst[sudo_idx + 1], "/usr/bin/pkexec")
+            self.assertIn("--cleanmenu", cmd_yay_inst)
+            self.assertIn("--diffmenu", cmd_yay_inst)
+            self.assertNotIn("--answerclean", cmd_yay_inst)
+            self.assertNotIn("--answerdiff", cmd_yay_inst)
             self.assertIn("--", cmd_yay_inst)
             dash_idx = cmd_yay_inst.index("--")
             self.assertEqual(cmd_yay_inst[dash_idx + 1 :], ["visual-studio-code-bin"])
 
-            # 5. Yay sysupgrade
+            # 5. Yay sysupgrade (H-BACK1: --cleanmenu and --diffmenu preserved)
             cmd_yay_sys = build_safe_yay_sysupgrade_cmd()
             self.assertEqual(cmd_yay_sys[0], "/usr/bin/yay")
             self.assertIn("-Sua", cmd_yay_sys)
             self.assertIn("--sudo", cmd_yay_sys)
+            self.assertIn("--cleanmenu", cmd_yay_sys)
+            self.assertIn("--diffmenu", cmd_yay_sys)
+            self.assertNotIn("--answerclean", cmd_yay_sys)
+            self.assertNotIn("--answerdiff", cmd_yay_sys)
 
             # 6. Verify --noconfirm is never forced in any safe command builder
             for cmd in (cmd_inst, cmd_rem, cmd_sysup, cmd_yay_inst, cmd_yay_sys):
                 self.assertNotIn("--noconfirm", cmd)
+
+            # 7. Verify unsafe custom binary/config paths are rejected
+            with patch.dict(os.environ, {"REDSHIFT_PACMAN_BIN": "relative/pacman"}):
+                with self.assertRaises(SecurityViolationError):
+                    build_safe_pacman_install_cmd(["firefox"])
+            with patch.dict(os.environ, {"REDSHIFT_PACMAN_CONF": "/tmp/bad path/pacman.conf"}):
+                with self.assertRaises(SecurityViolationError):
+                    build_safe_pacman_install_cmd(["firefox"])
 
     def test_pacman_lock_detection(self) -> None:
         with tempfile.NamedTemporaryFile() as tmp:
@@ -505,6 +521,76 @@ class TestThemeService(unittest.TestCase):
                 theme.reloadTheme()
                 self.assertFalse(theme.isDark, "Expected light mode detected from new background hex")
 
+    def test_caelestia_and_end4_priority_and_low_contrast_guard(self) -> None:
+        """Verify H-MAT1 dynamic priority between colors.json and scheme.json, and WCAG low-contrast protection."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            colors_path = tmp / "colors.json"
+            scheme_path = tmp / "scheme.json"
+            ui_switch_path = tmp / "ui-switch"
+
+            # 1. Both files present: in caelestia mode, scheme.json takes priority over colors.json
+            colors_path.write_text(
+                json.dumps({"background": "#121316", "primary": "#ff0000", "surface": "#121316"}),
+                encoding="utf-8",
+            )
+            scheme_path.write_text(
+                json.dumps(
+                    {
+                        "mode": "dark",
+                        "variant": "fidelity",
+                        "colours": {"background": "141318", "primary": "7bd0ff", "surface": "141318"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            ui_switch_path.write_text("caelestia", encoding="utf-8")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "REDSHIFT_COLORS_JSON_PATH": str(colors_path),
+                    "REDSHIFT_CAELESTIA_SCHEME_PATH": str(scheme_path),
+                    "REDSHIFT_UI_SWITCH_STATE_PATH": str(ui_switch_path),
+                },
+            ):
+                theme = ThemeService()
+                self.assertEqual(theme.frontendMode, "caelestia")
+                self.assertEqual(theme.colors["primary"].lower(), "#7bd0ff")
+
+                # 2. Switch to end4 mode with newer colors.json: colors.json takes priority
+                ui_switch_path.write_text("end4", encoding="utf-8")
+                colors_path.write_text(
+                    json.dumps({"background": "#121316", "primary": "#d0bcff", "surface": "#121316"}),
+                    encoding="utf-8",
+                )
+                os.utime(colors_path, (time.time() + 10, time.time() + 10))
+                theme.reloadTheme()
+                self.assertEqual(theme.frontendMode, "end4")
+                self.assertEqual(theme.colors["primary"].lower(), "#d0bcff")
+
+                # 3. Low-contrast pathological dark palette (primary == surface == #141318, on_surface == #16151a)
+                colors_path.write_text(
+                    json.dumps(
+                        {
+                            "background": "#141318",
+                            "surface": "#141318",
+                            "surface_container": "#151419",
+                            "primary": "#141318",
+                            "secondary": "#141318",
+                            "tertiary": "#141318",
+                            "on_surface": "#16151a",
+                            "on_surface_variant": "#17161b",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                os.utime(colors_path, (time.time() + 20, time.time() + 20))
+                theme.reloadTheme()
+                self.assertNotEqual(theme.colors["primary"].lower(), "#141318")
+                self.assertNotEqual(theme.colors["on_surface"].lower(), "#16151a")
+                self.assertEqual(theme.colors["on_surface"].lower(), "#e5e3d8")
+
 
 # =============================================================================
 # 5. Testes de Transação Assíncrona e Controller (TestStoreControllerAndTransactions)
@@ -610,6 +696,106 @@ class TestStoreControllerAndTransactions(unittest.TestCase):
             self.assertTrue(ctrl.waitingForInput)
             self.assertIn("[S/n]", ctrl.currentPromptText)
 
+    def test_aur_interactive_menus_and_polkit_dismissal(self) -> None:
+        """Verify H-BACK1 multi-line yay AUR menu prompt detection, GIT_PAGER=cat diff streaming, and Polkit 126 refusal."""
+        app = get_qt_app()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            fake_yay = tmp / "fake-yay.sh"
+            fake_yay.write_text(
+                "#!/usr/bin/env bash\n"
+                "echo '==> Packages to cleanBuild?'\n"
+                "echo '==> [N]one [A]ll [Ab]ort [I]nstalled [No]tInstalled or (1 2 3, 1-3, ^4)'\n"
+                "printf '==> '\n"
+                "read -r ans1\n"
+                "echo \"cleanBuild_answer=$ans1\"\n"
+                "echo '==> Diffs to show?'\n"
+                "echo '==> [N]one [A]ll [Ab]ort [I]nstalled [No]tInstalled or (1 2 3, 1-3, ^4)'\n"
+                "printf '==> '\n"
+                "read -r ans2\n"
+                "if [[ \"$ans2\" == \"A\" ]]; then\n"
+                "  echo \"--- a/PKGBUILD\"\n"
+                "  echo \"+++ b/PKGBUILD\"\n"
+                "  echo \"@@ -1 +1 @@\"\n"
+                "  echo \"+pkgver=1.0.0\"\n"
+                "  echo \"PAGER_ENV=${GIT_PAGER}:${PAGER}\"\n"
+                "fi\n"
+                "printf ':: Proceed with install? [Y/n] '\n"
+                "read -r ans3\n"
+                "if [[ \"$ans3\" == \"y\" || \"$ans3\" == \"Y\" ]]; then exit 0; else exit 1; fi\n",
+                encoding="utf-8",
+            )
+            fake_yay.chmod(0o755)
+
+            fake_pkexec_dismiss = tmp / "fake-pkexec-dismiss.sh"
+            fake_pkexec_dismiss.write_text(
+                "#!/usr/bin/env bash\n"
+                "echo 'Error executing command as another user: Request dismissed' >&2\n"
+                "exit 126\n",
+                encoding="utf-8",
+            )
+            fake_pkexec_dismiss.chmod(0o755)
+
+            non_existent = "/tmp/test_pacman_lock_should_not_exist_xyz123.lck"
+            with patch.dict(
+                os.environ,
+                {
+                    "REDSHIFT_YAY_BIN": str(fake_yay),
+                    "REDSHIFT_PKEXEC_BIN": str(fake_pkexec_dismiss),
+                    "REDSHIFT_PACMAN_LOCK_PATH": non_existent,
+                },
+            ), patch("backend.transaction_service.ensure_polkit_agent", return_value=True), patch("os.geteuid", return_value=1000):
+                tx = TransactionService(mock_mode=False)
+                logs: list[str] = []
+                prompts: list[str] = []
+                tx.logLineReceived.connect(logs.append)
+
+                step = {"idx": 0}
+                def on_prompt() -> None:
+                    if tx.waiting_for_input:
+                        prompts.append(tx.current_prompt_text)
+                        step["idx"] += 1
+                        if step["idx"] == 1:
+                            tx.send_input("N")
+                        elif step["idx"] == 2:
+                            tx.send_input("A")
+                        elif step["idx"] >= 3:
+                            tx.send_input("y")
+
+                tx.promptChanged.connect(on_prompt)
+                done = {"finished": False, "success": False, "msg": ""}
+                tx.transactionFinished.connect(
+                    lambda s, a, m: done.update({"finished": True, "success": s, "msg": m})
+                )
+
+                ok = tx.install_package("yay-bin", "aur")
+                self.assertTrue(ok)
+                t0 = time.time()
+                while not done["finished"] and (time.time() - t0) < 5.0:
+                    app.processEvents()
+                    time.sleep(0.01)
+
+                self.assertTrue(done["finished"])
+                self.assertTrue(done["success"])
+                self.assertGreaterEqual(len(prompts), 3)
+                full_log = "\n".join(logs)
+                self.assertIn("+pkgver=1.0.0", full_log)
+                self.assertIn("PAGER_ENV=cat:cat", full_log)
+
+                # Test Polkit refusal (exit 126) on official install
+                done["finished"] = False
+                ok2 = tx.install_package("firefox", "official")
+                self.assertTrue(ok2)
+                t0 = time.time()
+                while not done["finished"] and (time.time() - t0) < 5.0:
+                    app.processEvents()
+                    time.sleep(0.01)
+
+                self.assertTrue(done["finished"])
+                self.assertFalse(done["success"])
+                self.assertEqual(tx.state, "cancelled")
+                self.assertIn("Polkit", done["msg"])
+
 
 # =============================================================================
 # 6. Testes de Integração Headless Qt6/QML (TestQmlHeadlessIntegration)
@@ -684,6 +870,20 @@ class TestQmlHeadlessIntegration(unittest.TestCase):
         root_window.openDetail("firefox", "official")
         app.processEvents()
         self.assertEqual(store.selectedPackage.get("name"), "firefox")
+
+        # Verify OperationsLogDrawer AUR menu prompt detection (H-UI1)
+        from PyQt6.QtCore import QObject
+        log_drawer = root_window.findChild(QObject, "logDrawer")
+        self.assertIsNotNone(log_drawer)
+        store._tx_service.simulate_prompt_for_test("==> Diffs to show? ==> [N]one [A]ll [Ab]ort")
+        app.processEvents()
+        self.assertTrue(log_drawer.property("waitingForInput"))
+        self.assertTrue(log_drawer.property("isAurMenuPrompt"))
+
+        store._tx_service.simulate_prompt_for_test(":: Proceed with installation? [Y/n]")
+        app.processEvents()
+        self.assertTrue(log_drawer.property("waitingForInput"))
+        self.assertFalse(log_drawer.property("isAurMenuPrompt"))
 
         # Theme preview toggle
         theme.togglePreviewMode()

@@ -12,7 +12,15 @@ import logging
 import re
 from typing import Sequence
 
-from PyQt6.QtCore import QObject, QProcess, QTimer, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import (
+    QObject,
+    QProcess,
+    QProcessEnvironment,
+    QTimer,
+    pyqtProperty,
+    pyqtSignal,
+    pyqtSlot,
+)
 
 from .catalog_service import is_mock_mode
 from .security import (
@@ -37,7 +45,12 @@ PROGRESS_RE = re.compile(
 # Regex to detect interactive prompts requiring user confirmation
 PROMPT_RE = re.compile(
     r"(\[[Yy]/[Nn]\]|\[[Ss]/[Nn]\]|\[[Yy][Ee][Ss]/[Nn][Oo]\]|"
-    r"Proceed with (?:installation|upgrade)\?|Continuar a instalação\?|"
+    r"Proceed with (?:install|installation|upgrade|removal)\?|Continuar a (?:instalação|atualização|remoção)\?|"
+    r"Packages to cleanBuild\?|Pacotes para construir|"
+    r"Diffs to show\?|Diffs para mostrar\?|"
+    r"PKGBUILDs to edit\?|PKGBUILDs para editar\?|"
+    r"\[N\]one\s+\[A\]ll\s+\[Ab\]ort|"
+    r"Enter a number|Digite um número|Enter a selection|"
     r"Remove \w+\?|Remover \w+\?|Substituir \w+\?|::\s*Proceed|::\s*Continuar)",
     re.IGNORECASE,
 )
@@ -81,6 +94,7 @@ class TransactionService(QObject):
         self._mock_step: int = 0
         self._mock_target_cmd: list[str] = []
         self._last_locked: bool | None = None
+        self._recent_lines: list[str] = []
 
     # -------------------------------------------------------------------------
     # Properties
@@ -395,6 +409,7 @@ class TransactionService(QObject):
         self._current_action = action
         self._current_packages = packages
         self._stdout_buffer = ""
+        self._recent_lines = []
         self._clear_prompt_state()
         self._set_progress(-1)
         self._set_stage(initial_stage)
@@ -416,6 +431,14 @@ class TransactionService(QObject):
         self._process.setProgram(cmd[0])
         self._process.setArguments(cmd[1:])
 
+        # Configure environment so pagers (less) don't hang diff review
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("GIT_PAGER", "cat")
+        env.insert("PAGER", "cat")
+        env.insert("SYSTEMD_PAGER", "cat")
+        env.insert("TERM", "dumb")
+        self._process.setProcessEnvironment(env)
+
         self._process.readyReadStandardOutput.connect(self._on_stdout_ready)
         self._process.readyReadStandardError.connect(self._on_stderr_ready)
         self._process.finished.connect(self._on_process_finished)
@@ -424,7 +447,7 @@ class TransactionService(QObject):
         return True
 
     def _on_stdout_ready(self) -> None:
-        """Process output bytes from stdout with line and prompt detection."""
+        """Process output bytes from stdout with line, recent history, and prompt detection."""
         if not self._process:
             return
         data = self._process.readAllStandardOutput().data().decode("utf-8", errors="replace")
@@ -438,18 +461,15 @@ class TransactionService(QObject):
                 if not line_str:
                     continue
                 self.logLineReceived.emit(line_str)
+                self._recent_lines.append(line_str)
+                if len(self._recent_lines) > 4:
+                    self._recent_lines.pop(0)
                 self._parse_progress_from_log(line_str)
                 self._update_stage_from_log(line_str)
             # Retain trailing incomplete line in buffer
             self._stdout_buffer = lines[-1]
 
-        # Check for interactive prompt in remaining buffer
-        if self._stdout_buffer:
-            m = PROMPT_RE.search(self._stdout_buffer)
-            if m:
-                self._waiting_for_input = True
-                self._current_prompt_text = self._stdout_buffer.strip()
-                self.promptChanged.emit()
+        self._check_for_prompts()
 
     def _on_stderr_ready(self) -> None:
         """Process error lines from stderr."""
@@ -461,8 +481,45 @@ class TransactionService(QObject):
             if not line_str:
                 continue
             self.logLineReceived.emit(f"[STDERR] {line_str}")
+            self._recent_lines.append(line_str)
+            if len(self._recent_lines) > 4:
+                self._recent_lines.pop(0)
             self._parse_progress_from_log(line_str)
             self._update_stage_from_log(line_str)
+
+        self._check_for_prompts()
+
+    def _check_for_prompts(self) -> None:
+        """Evaluate stdout buffer and recent lines for interactive pacman/yay prompts."""
+        prompt_found = False
+        detected_text = ""
+        clean_buf = self._stdout_buffer.strip()
+
+        # 1. Direct match on residual buffer
+        if clean_buf:
+            m = PROMPT_RE.search(clean_buf)
+            if m:
+                prompt_found = True
+                detected_text = clean_buf
+            elif clean_buf in ("==>", ":", "==> [N]one [A]ll [Ab]ort") or clean_buf.startswith("==>"):
+                # Check previous 2 recent lines to provide context
+                for prev in reversed(self._recent_lines[-2:]):
+                    if PROMPT_RE.search(prev):
+                        prompt_found = True
+                        detected_text = f"{prev} {clean_buf}".strip()
+                        break
+
+        # 2. Check last complete line if buffer alone did not trigger
+        if not prompt_found and self._recent_lines:
+            last_line = self._recent_lines[-1]
+            if PROMPT_RE.search(last_line):
+                prompt_found = True
+                detected_text = last_line
+
+        if prompt_found:
+            self._waiting_for_input = True
+            self._current_prompt_text = detected_text
+            self.promptChanged.emit()
 
     def _on_process_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         """Handle transaction process termination."""
@@ -480,13 +537,25 @@ class TransactionService(QObject):
         else:
             self._set_progress(0)
             state_label = "cancelled" if self._state == "cancelled" else "error"
-            msg = f"Falha na execução (código de saída: {exit_code})."
+
+            # Check for Polkit dismissal/cancellation or denial
+            polkit_denied = (exit_code in (126, 127)) or any(
+                any(term in l.lower() for term in ("request dismissed", "not authorized", "authentication failed", "autorização recusada"))
+                for l in self._recent_lines
+            )
+            if polkit_denied:
+                msg = f"Autenticação Polkit recusada ou cancelada pelo usuário (código {exit_code})."
+                state_label = "cancelled"
+            else:
+                msg = f"Falha na execução (código de saída: {exit_code})."
+
             self._set_state(state_label, msg)
             self.logLineReceived.emit(f"=== [FALHA] {msg} ===")
             self.transactionFinished.emit(False, action, msg)
 
         self._current_action = ""
         self._current_packages = []
+        self._recent_lines = []
         self._process = None
 
     def _parse_progress_from_log(self, line: str) -> None:

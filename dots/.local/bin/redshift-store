@@ -3,7 +3,10 @@
 # Redshift Store — Launcher Script
 # =============================================================================
 # Dispatches execution to the Redshift Store application (main.py).
-# Checks installed XDG_DATA_HOME path first, falls back to relative repository path.
+# Supports source resolution across user directory (~/.local/share),
+# system installation (/usr/share) and repository clone.
+# Supports REDSHIFT_STORE_SOURCE ('user', 'system', 'repo') override.
+# When both user and system copies exist, selects the most recent one (-nt).
 # =============================================================================
 
 set -euo pipefail
@@ -12,17 +15,59 @@ XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 INSTALLED_MAIN="${XDG_DATA_HOME}/redshift-os/redshift-store/main.py"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RELATIVE_MAIN="$(cd "${SCRIPT_DIR}/../share/redshift-os/redshift-store" 2>/dev/null && pwd || true)/main.py"
-SYSTEM_MAIN="/usr/share/redshift-os/redshift-store/main.py"
+SYSTEM_MAIN="${REDSHIFT_STORE_SYSTEM_MAIN:-/usr/share/redshift-os/redshift-store/main.py}"
 
-if [[ -f "$INSTALLED_MAIN" ]]; then
-    MAIN_PY="$INSTALLED_MAIN"
-elif [[ -f "$RELATIVE_MAIN" ]]; then
-    MAIN_PY="$RELATIVE_MAIN"
-elif [[ -f "$SYSTEM_MAIN" ]]; then
-    MAIN_PY="$SYSTEM_MAIN"
-else
-    printf "Error: Redshift Store main.py not found at:\n  - %s\n  - %s\n  - %s\n" "$INSTALLED_MAIN" "$RELATIVE_MAIN" "$SYSTEM_MAIN" >&2
-    exit 1
-fi
+MAIN_PY=""
+
+case "${REDSHIFT_STORE_SOURCE:-}" in
+    user)
+        if [[ -f "$INSTALLED_MAIN" ]]; then
+            MAIN_PY="$INSTALLED_MAIN"
+        else
+            printf "Error: REDSHIFT_STORE_SOURCE=user requested, but %s not found.\n" "$INSTALLED_MAIN" >&2
+            exit 1
+        fi
+        ;;
+    system)
+        if [[ -f "$SYSTEM_MAIN" ]]; then
+            MAIN_PY="$SYSTEM_MAIN"
+        else
+            printf "Error: REDSHIFT_STORE_SOURCE=system requested, but %s not found.\n" "$SYSTEM_MAIN" >&2
+            exit 1
+        fi
+        ;;
+    repo)
+        if [[ -f "$RELATIVE_MAIN" ]]; then
+            MAIN_PY="$RELATIVE_MAIN"
+        else
+            printf "Error: REDSHIFT_STORE_SOURCE=repo requested, but %s not found.\n" "$RELATIVE_MAIN" >&2
+            exit 1
+        fi
+        ;;
+    "")
+        # Automatic coexistence resolution
+        if [[ -f "$INSTALLED_MAIN" && -f "$SYSTEM_MAIN" ]]; then
+            if [[ "$SYSTEM_MAIN" -nt "$INSTALLED_MAIN" ]]; then
+                MAIN_PY="$SYSTEM_MAIN"
+            else
+                MAIN_PY="$INSTALLED_MAIN"
+            fi
+        elif [[ -f "$INSTALLED_MAIN" ]]; then
+            MAIN_PY="$INSTALLED_MAIN"
+        elif [[ -f "$RELATIVE_MAIN" ]]; then
+            MAIN_PY="$RELATIVE_MAIN"
+        elif [[ -f "$SYSTEM_MAIN" ]]; then
+            MAIN_PY="$SYSTEM_MAIN"
+        else
+            printf "Error: Redshift Store main.py not found at:\n  - %s\n  - %s\n  - %s\n" "$INSTALLED_MAIN" "$RELATIVE_MAIN" "$SYSTEM_MAIN" >&2
+            exit 1
+        fi
+        ;;
+    *)
+        printf "Error: Invalid REDSHIFT_STORE_SOURCE='%s' (valid values: user, system, repo).\n" "$REDSHIFT_STORE_SOURCE" >&2
+        exit 1
+        ;;
+esac
 
 exec python3 "$MAIN_PY" "$@"
+

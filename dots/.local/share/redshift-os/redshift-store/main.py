@@ -198,6 +198,7 @@ def main() -> int:
     icon_candidates = [
         os.path.expanduser("~/.local/share/redshift-os/icons/redshift-compact.png"),
         os.path.expanduser("~/.local/share/icons/hicolor/scalable/apps/redshift-store.svg"),
+        "/usr/share/icons/hicolor/scalable/apps/redshift-store.svg",
         "/usr/share/icons/hicolor/scalable/apps/system-software-install.svg",
     ]
     for ic_path in icon_candidates:

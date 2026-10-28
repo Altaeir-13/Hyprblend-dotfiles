@@ -143,6 +143,7 @@ Rectangle {
                     Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        clip: true
 
                         Text {
                             anchors.fill: parent
@@ -163,6 +164,7 @@ Rectangle {
                             font.pixelSize: 12
                             color: root.getToken("onSurface", "#e6e1e1")
                             selectByMouse: true
+                            clip: true
                             onTextChanged: root.localFilterText = text.toLowerCase().trim()
                         }
                     }

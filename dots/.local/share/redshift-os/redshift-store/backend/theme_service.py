@@ -167,16 +167,17 @@ def _ensure_contrast(
     bg_hex: str,
     target_dark: str = "#1d1b20",
     target_light: str = "#e5e3d8",
+    min_contrast: float = 3.0,
 ) -> str:
     """
     Enforces minimum readable contrast between foreground (on_*) and background.
-    If contrast ratio is below 3.0:1 (or text is dark on dark background),
+    If contrast ratio is below min_contrast (or text is dark on dark background),
     replaces fg with a guaranteed high-contrast token.
     """
     bg_lum = _srgb_luminance(bg_hex)
     fg_lum = _srgb_luminance(fg_hex)
     contrast = (max(bg_lum, fg_lum) + 0.05) / (min(bg_lum, fg_lum) + 0.05)
-    if contrast < 3.0 or (bg_lum < 0.5 and fg_lum < 0.25):
+    if contrast < min_contrast or (bg_lum < 0.5 and fg_lum < 0.25 and min_contrast >= 3.0):
         return target_light if bg_lum < 0.5 else target_dark
     return fg_hex
 
@@ -227,6 +228,12 @@ class ThemeService(QObject):
                 state_dir / "quickshell/user/generated/applied_scheme_type.txt",
             )
         )
+        self._color_txt_path = Path(
+            os.environ.get(
+                "REDSHIFT_COLOR_TXT_PATH",
+                state_dir / "quickshell/user/generated/color.txt",
+            )
+        )
 
         # State storage
         self._colors: Dict[str, str] = {}
@@ -263,6 +270,7 @@ class ThemeService(QObject):
             self._ui_switch_path,
             self._wallpaper_path_file,
             self._applied_scheme_type_path,
+            self._color_txt_path,
         ]
 
         for file_path in watched_files:
@@ -297,6 +305,7 @@ class ThemeService(QObject):
             self._ui_switch_path,
             self._wallpaper_path_file,
             self._applied_scheme_type_path,
+            self._color_txt_path,
         ]:
             path_str = str(file_path)
             if file_path.exists() and path_str not in current_files:
@@ -318,25 +327,28 @@ class ThemeService(QObject):
         - camelCase (e.g. 'primaryContainer')
         - m3 prefixed (e.g. 'm3primaryContainer' and 'm3PrimaryContainer')
         - Functional status tokens (success, on_success, warning, on_warning, etc.)
+        Applies WCAG contrast guards for low-contrast palettes.
         """
         normalized: Dict[str, str] = {}
 
-        for k, v in raw_tokens.items():
-            if not isinstance(v, str):
-                continue
-            hex_val = v.strip()
-            if not hex_val.startswith("#"):
-                hex_val = f"#{hex_val}"
-
-            # Convert camelCase to snake_case if coming from Caelestia scheme.json
-            snake_k = re.sub(r"([A-Z])", r"_\1", k).lower()
+        def set_token(key: str, hex_value: str) -> None:
+            if not isinstance(hex_value, str):
+                return
+            clean_hex = hex_value.strip()
+            if not clean_hex.startswith("#"):
+                clean_hex = f"#{clean_hex}"
+            clean_k = key.replace("-", "_")
+            snake_k = re.sub(r"([A-Z])", r"_\1", clean_k).lower()
+            snake_k = re.sub(r"_+", "_", snake_k).strip("_")
             camel_k = re.sub(r"_([a-z])", lambda m: m.group(1).upper(), snake_k)
             pascal_k = camel_k[0].upper() + camel_k[1:] if camel_k else ""
+            normalized[snake_k] = clean_hex
+            normalized[camel_k] = clean_hex
+            normalized[f"m3{camel_k}"] = clean_hex
+            normalized[f"m3{pascal_k}"] = clean_hex
 
-            normalized[snake_k] = hex_val
-            normalized[camel_k] = hex_val
-            normalized[f"m3{camel_k}"] = hex_val
-            normalized[f"m3{pascal_k}"] = hex_val
+        for k, v in raw_tokens.items():
+            set_token(k, v)
 
         # Functional tokens (Material 3 semantics)
         functional = {
@@ -351,43 +363,71 @@ class ThemeService(QObject):
         }
 
         for fk, fv in functional.items():
-            f_camel = re.sub(r"_([a-z])", lambda m: m.group(1).upper(), fk)
-            f_pascal = f_camel[0].upper() + f_camel[1:] if f_camel else ""
-            normalized[fk] = fv
-            normalized[f_camel] = fv
-            normalized[f"m3{f_camel}"] = fv
-            normalized[f"m3{f_pascal}"] = fv
+            set_token(fk, fv)
 
-        # Ensure high contrast pairs for all Material 3 foreground/background pairs
+        # 1. Accent contrast checks:
+        # primary, secondary, and tertiary validated with min_contrast >= 2.5 against surface and surface_container
+        accent_checks = [
+            ("primary", "#4f378b", "#d0bcff"),
+            ("secondary", "#4a4458", "#ccc2dc"),
+            ("tertiary", "#633b48", "#efb8c8"),
+        ]
+        for accent_key, light_fb, dark_fb in accent_checks:
+            accent_val = normalized.get(accent_key, dark_fb if is_dark else light_fb)
+            for bg_key in ("surface", "surface_container"):
+                bg_val = normalized.get(bg_key)
+                if bg_val:
+                    accent_val = _ensure_contrast(
+                        accent_val, bg_val, target_dark=light_fb, target_light=dark_fb, min_contrast=2.5
+                    )
+            set_token(accent_key, accent_val)
+
+        # 2. General contrast checks for Material 3 foreground/background pairs (min_contrast >= 3.0)
         contrast_pairs = [
             ("on_background", "background", "#1d1b20", "#e5e3d8"),
             ("on_surface", "surface", "#1d1b20", "#e5e3d8"),
             ("on_surface_variant", "surface_variant", "#48454e", "#c9c5d0"),
-            ("on_primary", "primary", "#ffffff", "#30285f"),
+            ("on_primary", "primary", "#30285f", "#ffffff"),
             ("on_primary_container", "primary_container", "#1b1149", "#e5deff"),
-            ("on_secondary", "secondary", "#ffffff", "#312e41"),
+            ("on_secondary", "secondary", "#312e41", "#ffffff"),
             ("on_secondary_container", "secondary_container", "#1c192b", "#e5dff9"),
-            ("on_tertiary", "tertiary", "#ffffff", "#482537"),
+            ("on_tertiary", "tertiary", "#482537", "#ffffff"),
             ("on_tertiary_container", "tertiary_container", "#301122", "#ffd8e8"),
-            ("on_error", "error", "#ffffff", "#690005"),
+            ("on_error", "error", "#690005", "#ffffff"),
             ("on_error_container", "error_container", "#410002", "#ffdad6"),
-            ("on_success", "success", "#ffffff", "#213528"),
+            ("on_success", "success", "#213528", "#ffffff"),
             ("on_success_container", "success_container", "#00210b", "#d1e9d6"),
-            ("on_warning", "warning", "#ffffff", "#452b00"),
+            ("on_warning", "warning", "#452b00", "#ffffff"),
             ("on_warning_container", "warning_container", "#2a1700", "#ffddb4"),
         ]
 
-        for fg_key, bg_key, light_fb, dark_fb in contrast_pairs:
+        for fg_key, bg_key, target_dark, target_light in contrast_pairs:
             fg_val = normalized.get(fg_key)
             bg_val = normalized.get(bg_key)
             if fg_val and bg_val:
-                fixed_fg = _ensure_contrast(fg_val, bg_val, light_fb, dark_fb)
-                f_camel = re.sub(r"_([a-z])", lambda m: m.group(1).upper(), fg_key)
-                f_pascal = f_camel[0].upper() + f_camel[1:] if f_camel else ""
-                normalized[fg_key] = fixed_fg
-                normalized[f_camel] = fixed_fg
-                normalized[f"m3{f_camel}"] = fixed_fg
-                normalized[f"m3{f_pascal}"] = fixed_fg
+                fixed_fg = _ensure_contrast(fg_val, bg_val, target_dark, target_light, min_contrast=3.0)
+                set_token(fg_key, fixed_fg)
+
+        # 3. Reinforced multi-surface checks:
+        # on_surface validated against surface, surface_container, and surface_container_low (min_contrast >= 3.0)
+        on_surface_val = normalized.get("on_surface", "#e5e3d8" if is_dark else "#1d1b20")
+        for bg_key in ("surface", "surface_container", "surface_container_low"):
+            bg_val = normalized.get(bg_key)
+            if bg_val:
+                on_surface_val = _ensure_contrast(
+                    on_surface_val, bg_val, target_dark="#1d1b20", target_light="#e5e3d8", min_contrast=3.0
+                )
+        set_token("on_surface", on_surface_val)
+
+        # on_surface_variant validated against surface_variant, surface, and surface_container (min_contrast >= 3.0)
+        on_surface_var = normalized.get("on_surface_variant", "#c9c5d0" if is_dark else "#48454e")
+        for bg_key in ("surface_variant", "surface", "surface_container"):
+            bg_val = normalized.get(bg_key)
+            if bg_val:
+                on_surface_var = _ensure_contrast(
+                    on_surface_var, bg_val, target_dark="#48454e", target_light="#c9c5d0", min_contrast=3.0
+                )
+        set_token("on_surface_variant", on_surface_var)
 
         return normalized
 
@@ -415,11 +455,13 @@ class ThemeService(QObject):
 
         # 3. Determine schemeVariant
         variant = "scheme-tonal-spot"
+        applied_mtime = 0.0
         if self._applied_scheme_type_path.exists():
             try:
                 v = self._applied_scheme_type_path.read_text(encoding="utf-8").strip()
                 if v:
                     variant = v
+                applied_mtime = self._applied_scheme_type_path.stat().st_mtime
             except Exception:
                 pass
         self._scheme_variant = variant
@@ -434,37 +476,97 @@ class ThemeService(QObject):
             raw_colors = dict(FALLBACK_M3_DARK if detected_dark else FALLBACK_M3_LIGHT)
             found_source = True
         else:
-            # Try primary source: colors.json (Matugen)
+            def _to_snake_dict(d: Dict[str, Any]) -> Dict[str, str]:
+                res: Dict[str, str] = {}
+                for k, v in d.items():
+                    if isinstance(v, str):
+                        clean_k = k.replace("-", "_")
+                        snake_k = re.sub(r"([A-Z])", r"_\1", clean_k).lower()
+                        snake_k = re.sub(r"_+", "_", snake_k).strip("_")
+                        res[snake_k] = v.strip()
+                return res
+
+            colors_data: Dict[str, str] = {}
+            colors_mtime: float = 0.0
             if self._colors_json_path.exists():
                 try:
-                    data = json.loads(self._colors_json_path.read_text(encoding="utf-8"))
-                    if isinstance(data, dict) and len(data) > 0:
-                        raw_colors = data
-                        bg = raw_colors.get("background")
-                        if bg:
-                            detected_dark = _calc_is_dark(bg)
-                        found_source = True
+                    c_data = json.loads(self._colors_json_path.read_text(encoding="utf-8"))
+                    if isinstance(c_data, dict) and len(c_data) > 0:
+                        colors_data = _to_snake_dict(c_data)
+                        colors_mtime = self._colors_json_path.stat().st_mtime
                 except Exception:
                     pass
 
-            # Try secondary source: Caelestia scheme.json
-            if not found_source and self._caelestia_scheme_path.exists():
+            scheme_colours: Dict[str, str] = {}
+            scheme_mode: Optional[str] = None
+            scheme_variant: Optional[str] = None
+            scheme_mtime: float = 0.0
+            if self._caelestia_scheme_path.exists():
                 try:
-                    sdata = json.loads(self._caelestia_scheme_path.read_text(encoding="utf-8"))
-                    if isinstance(sdata, dict):
-                        colours = sdata.get("colours")
-                        if isinstance(colours, dict) and len(colours) > 0:
-                            raw_colors = colours
-                            if sdata.get("mode") in ("dark", "light"):
-                                detected_dark = sdata["mode"] == "dark"
-                            else:
-                                bg = colours.get("background", "141318")
-                                detected_dark = _calc_is_dark(bg)
-                            if sdata.get("variant"):
-                                self._scheme_variant = str(sdata["variant"])
-                            found_source = True
+                    s_data = json.loads(self._caelestia_scheme_path.read_text(encoding="utf-8"))
+                    if isinstance(s_data, dict):
+                        cols = s_data.get("colours")
+                        if isinstance(cols, dict) and len(cols) > 0:
+                            scheme_colours = _to_snake_dict(cols)
+                            scheme_mode = s_data.get("mode")
+                            if s_data.get("variant"):
+                                scheme_variant = str(s_data["variant"])
+                            scheme_mtime = self._caelestia_scheme_path.stat().st_mtime
                 except Exception:
                     pass
+
+            # Prioridade Inteligente:
+            # - Caelestia como fonte primária quando:
+            #   * frontend_mode == "caelestia" (com scheme_colours disponível)
+            #   * ou scheme.json tiver st_mtime mais recente que colors.json (com scheme_colours disponível)
+            #   * ou colors.json não existir/estiver vazio
+            # - end-4 como fonte primária quando:
+            #   * frontend_mode == "end4" (e colors.json for mais recente ou igual)
+            #   * ou scheme.json não existir/estiver vazio
+            use_caelestia_primary = False
+            if scheme_colours:
+                if not colors_data:
+                    use_caelestia_primary = True
+                elif self._frontend_mode == "caelestia":
+                    use_caelestia_primary = True
+                elif self._frontend_mode == "end4":
+                    use_caelestia_primary = (scheme_mtime > colors_mtime)
+                else:
+                    use_caelestia_primary = (scheme_mtime > colors_mtime)
+
+            colors_dark = _calc_is_dark(colors_data.get("background", "#141318")) if colors_data else True
+            if scheme_mode in ("dark", "light"):
+                scheme_dark = (scheme_mode == "dark")
+            elif "background" in scheme_colours:
+                scheme_dark = _calc_is_dark(scheme_colours["background"])
+            else:
+                scheme_dark = colors_dark
+            same_polarity = (colors_dark == scheme_dark)
+
+            if use_caelestia_primary:
+                raw_colors = dict(colors_data) if same_polarity else {}
+                raw_colors.update(scheme_colours)
+                found_source = True
+                detected_dark = scheme_dark
+
+                if scheme_variant and applied_mtime <= scheme_mtime:
+                    self._scheme_variant = scheme_variant
+            elif colors_data:
+                raw_colors = dict(scheme_colours) if same_polarity else {}
+                raw_colors.update(colors_data)
+                found_source = True
+                detected_dark = colors_dark
+            elif scheme_colours:
+                raw_colors = dict(scheme_colours)
+                found_source = True
+
+                if scheme_mode in ("dark", "light"):
+                    detected_dark = (scheme_mode == "dark")
+                elif "background" in scheme_colours:
+                    detected_dark = _calc_is_dark(scheme_colours["background"])
+
+                if scheme_variant and applied_mtime <= scheme_mtime:
+                    self._scheme_variant = scheme_variant
 
             # Base fallback if no valid theme file found
             if not found_source:

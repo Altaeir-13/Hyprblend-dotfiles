@@ -269,6 +269,7 @@ ApplicationWindow {
             // Drawer Deslizante de Operações e Logs em Tempo Real
             OperationsLogDrawer {
                 id: logDrawer
+                objectName: "logDrawer"
                 Layout.fillWidth: true
                 theme: appTheme
                 isOpen: false
@@ -299,8 +300,12 @@ ApplicationWindow {
                     }
                 }
                 onCustomInputSubmitted: (text) => {
-                    if (root.store && root.store.sendInput) {
-                        root.store.sendInput(text);
+                    if (root.store) {
+                        if (root.store.sendTransactionInput) {
+                            root.store.sendTransactionInput(text);
+                        } else if (root.store.sendInput) {
+                            root.store.sendInput(text);
+                        }
                     }
                 }
             }

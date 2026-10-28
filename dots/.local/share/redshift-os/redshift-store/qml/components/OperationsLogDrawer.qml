@@ -17,6 +17,14 @@ Rectangle {
     property string transactionStage: "idle"
     property bool waitingForInput: false
     property string currentPromptText: ""
+    readonly property bool isAurMenuPrompt: {
+        const t = (root.currentPromptText || "").toLowerCase();
+        return t.indexOf("cleanbuild") !== -1 ||
+               t.indexOf("diffs to show") !== -1 ||
+               t.indexOf("diffs para mostrar") !== -1 ||
+               t.indexOf("pkgbuilds to edit") !== -1 ||
+               t.indexOf("[n]one") !== -1;
+    }
 
     signal cancelRequested()
     signal clearLogsRequested()
@@ -307,7 +315,7 @@ Rectangle {
             id: promptBar
             visible: root.waitingForInput
             Layout.fillWidth: true
-            height: 38
+            height: 40
             radius: root.getToken("radiusNormal", 14)
             color: root.getToken("primaryContainer", "#4f378b")
             border.width: 1
@@ -316,11 +324,11 @@ Rectangle {
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 12
-                anchors.rightMargin: 12
-                spacing: 10
+                anchors.rightMargin: 10
+                spacing: 8
 
                 Text {
-                    text: "help"
+                    text: root.isAurMenuPrompt ? "rate_review" : "help"
                     font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
                     font.pixelSize: 18
                     color: root.getToken("primary", "#d0bcff")
@@ -337,77 +345,283 @@ Rectangle {
                     elide: Text.ElideRight
                 }
 
-                // Botão Confirmar (S/Y)
-                Rectangle {
-                    implicitWidth: confirmBtnRow.implicitWidth + 16
-                    height: 28
-                    radius: root.getToken("radiusFull", 9999)
-                    color: confirmMouse.containsMouse ? root.getToken("primary", "#d0bcff") : root.getToken("secondaryContainer", "#4a4458")
+                // Opções para Menus de Revisão do AUR (cleanBuild, Diffs, PKGBUILDs)
+                RowLayout {
+                    visible: root.isAurMenuPrompt
+                    spacing: 6
 
-                    RowLayout {
-                        id: confirmBtnRow
-                        anchors.centerIn: parent
-                        spacing: 4
+                    // Botão Nenhum (N)
+                    Rectangle {
+                        implicitWidth: aurNoneRow.implicitWidth + 14
+                        height: 28
+                        radius: root.getToken("radiusFull", 9999)
+                        color: aurNoneMouse.containsMouse ? root.getToken("primary", "#d0bcff") : root.getToken("secondaryContainer", "#4a4458")
 
-                        Text {
-                            text: "check"
-                            font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
-                            font.pixelSize: 14
-                            color: confirmMouse.containsMouse ? root.getToken("onPrimary", "#381e72") : root.getToken("onSecondaryContainer", "#e8def8")
+                        RowLayout {
+                            id: aurNoneRow
+                            anchors.centerIn: parent
+                            spacing: 4
+
+                            Text {
+                                text: "close"
+                                font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                                font.pixelSize: 13
+                                color: aurNoneMouse.containsMouse ? root.getToken("onPrimary", "#381e72") : root.getToken("onSecondaryContainer", "#e8def8")
+                            }
+
+                            Text {
+                                text: "Nenhum (N)"
+                                font.family: root.getToken("fontFamily", "Google Sans Flex")
+                                font.pixelSize: 11
+                                font.weight: Font.Bold
+                                color: aurNoneMouse.containsMouse ? root.getToken("onPrimary", "#381e72") : root.getToken("onSecondaryContainer", "#e8def8")
+                            }
                         }
 
-                        Text {
-                            text: "Confirmar (S/Y)"
-                            font.family: root.getToken("fontFamily", "Google Sans Flex")
-                            font.pixelSize: 11
-                            font.weight: Font.Bold
-                            color: confirmMouse.containsMouse ? root.getToken("onPrimary", "#381e72") : root.getToken("onSecondaryContainer", "#e8def8")
+                        MouseArea {
+                            id: aurNoneMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.customInputSubmitted("N")
                         }
                     }
 
-                    MouseArea {
-                        id: confirmMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.promptResponseRequested(true)
+                    // Botão Mostrar Todos / Diff (A)
+                    Rectangle {
+                        implicitWidth: aurAllRow.implicitWidth + 14
+                        height: 28
+                        radius: root.getToken("radiusFull", 9999)
+                        color: aurAllMouse.containsMouse ? root.getToken("tertiary", "#efb8c8") : root.getToken("surfaceContainerHighest", "#363435")
+
+                        RowLayout {
+                            id: aurAllRow
+                            anchors.centerIn: parent
+                            spacing: 4
+
+                            Text {
+                                text: "visibility"
+                                font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                                font.pixelSize: 13
+                                color: aurAllMouse.containsMouse ? root.getToken("onTertiary", "#492532") : root.getToken("onSurface", "#e6e1e1")
+                            }
+
+                            Text {
+                                text: "Mostrar Todos / Diff (A)"
+                                font.family: root.getToken("fontFamily", "Google Sans Flex")
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                                color: aurAllMouse.containsMouse ? root.getToken("onTertiary", "#492532") : root.getToken("onSurface", "#e6e1e1")
+                            }
+                        }
+
+                        MouseArea {
+                            id: aurAllMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.customInputSubmitted("A")
+                        }
+                    }
+
+                    // Botão Abortar (Ab)
+                    Rectangle {
+                        implicitWidth: aurAbortRow.implicitWidth + 14
+                        height: 28
+                        radius: root.getToken("radiusFull", 9999)
+                        color: aurAbortMouse.containsMouse ? root.getToken("error", "#f2b8b5") : root.getToken("errorContainer", "#8c1d18")
+
+                        RowLayout {
+                            id: aurAbortRow
+                            anchors.centerIn: parent
+                            spacing: 4
+
+                            Text {
+                                text: "block"
+                                font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                                font.pixelSize: 13
+                                color: root.getToken("onErrorContainer", "#f9dedc")
+                            }
+
+                            Text {
+                                text: "Abortar (Ab)"
+                                font.family: root.getToken("fontFamily", "Google Sans Flex")
+                                font.pixelSize: 11
+                                font.weight: Font.Bold
+                                color: root.getToken("onErrorContainer", "#f9dedc")
+                            }
+                        }
+
+                        MouseArea {
+                            id: aurAbortMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.customInputSubmitted("Ab")
+                        }
                     }
                 }
 
-                // Botão Recusar (N)
-                Rectangle {
-                    implicitWidth: declineBtnRow.implicitWidth + 16
-                    height: 28
-                    radius: root.getToken("radiusFull", 9999)
-                    color: declineMouse.containsMouse ? root.getToken("error", "#f2b8b5") : root.getToken("errorContainer", "#8c1d18")
+                // Opções para Prompts Padrão de Confirmação (S/N)
+                RowLayout {
+                    visible: !root.isAurMenuPrompt
+                    spacing: 6
 
-                    RowLayout {
-                        id: declineBtnRow
-                        anchors.centerIn: parent
-                        spacing: 4
+                    // Botão Confirmar (S/Y)
+                    Rectangle {
+                        implicitWidth: confirmBtnRow.implicitWidth + 16
+                        height: 28
+                        radius: root.getToken("radiusFull", 9999)
+                        color: confirmMouse.containsMouse ? root.getToken("primary", "#d0bcff") : root.getToken("secondaryContainer", "#4a4458")
 
-                        Text {
-                            text: "close"
-                            font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
-                            font.pixelSize: 14
-                            color: root.getToken("onErrorContainer", "#f9dedc")
+                        RowLayout {
+                            id: confirmBtnRow
+                            anchors.centerIn: parent
+                            spacing: 4
+
+                            Text {
+                                text: "check"
+                                font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                                font.pixelSize: 14
+                                color: confirmMouse.containsMouse ? root.getToken("onPrimary", "#381e72") : root.getToken("onSecondaryContainer", "#e8def8")
+                            }
+
+                            Text {
+                                text: "Confirmar (S/Y)"
+                                font.family: root.getToken("fontFamily", "Google Sans Flex")
+                                font.pixelSize: 11
+                                font.weight: Font.Bold
+                                color: confirmMouse.containsMouse ? root.getToken("onPrimary", "#381e72") : root.getToken("onSecondaryContainer", "#e8def8")
+                            }
                         }
 
-                        Text {
-                            text: "Recusar (N)"
-                            font.family: root.getToken("fontFamily", "Google Sans Flex")
-                            font.pixelSize: 11
-                            font.weight: Font.Bold
-                            color: root.getToken("onErrorContainer", "#f9dedc")
+                        MouseArea {
+                            id: confirmMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.promptResponseRequested(true)
                         }
                     }
 
-                    MouseArea {
-                        id: declineMouse
+                    // Botão Recusar (N)
+                    Rectangle {
+                        implicitWidth: declineBtnRow.implicitWidth + 16
+                        height: 28
+                        radius: root.getToken("radiusFull", 9999)
+                        color: declineMouse.containsMouse ? root.getToken("error", "#f2b8b5") : root.getToken("errorContainer", "#8c1d18")
+
+                        RowLayout {
+                            id: declineBtnRow
+                            anchors.centerIn: parent
+                            spacing: 4
+
+                            Text {
+                                text: "close"
+                                font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                                font.pixelSize: 14
+                                color: root.getToken("onErrorContainer", "#f9dedc")
+                            }
+
+                            Text {
+                                text: "Recusar (N)"
+                                font.family: root.getToken("fontFamily", "Google Sans Flex")
+                                font.pixelSize: 11
+                                font.weight: Font.Bold
+                                color: root.getToken("onErrorContainer", "#f9dedc")
+                            }
+                        }
+
+                        MouseArea {
+                            id: declineMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.promptResponseRequested(false)
+                        }
+                    }
+                }
+
+                // Campo Compacto de Resposta Manual (para ambos os modos: permite digitar números, ranges, etc.)
+                Rectangle {
+                    id: customInputBox
+                    implicitWidth: 125
+                    height: 28
+                    radius: root.getToken("radiusFull", 9999)
+                    color: root.getToken("surfaceContainerLowest", "#0f0e0e")
+                    border.width: customPromptInput.activeFocus ? 1.5 : 1
+                    border.color: customPromptInput.activeFocus ?
+                        root.getToken("primary", "#d0bcff") : root.getToken("outlineVariant", "#49454f")
+
+                    RowLayout {
                         anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.promptResponseRequested(false)
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 3
+                        spacing: 4
+
+                        Item {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
+                            Text {
+                                anchors.fill: parent
+                                verticalAlignment: Text.AlignVCenter
+                                text: "Digitar..."
+                                font.family: root.getToken("fontFamily", "Google Sans Flex")
+                                font.pixelSize: 11
+                                color: root.getToken("onSurfaceVariant", "#cbc5ca")
+                                opacity: 0.6
+                                visible: customPromptInput.text.length === 0
+                            }
+
+                            TextInput {
+                                id: customPromptInput
+                                anchors.fill: parent
+                                verticalAlignment: TextInput.AlignVCenter
+                                font.family: root.getToken("monoFontFamily", "JetBrains Mono NF")
+                                font.pixelSize: 11
+                                color: root.getToken("onSurface", "#e6e1e1")
+                                selectByMouse: true
+                                clip: true
+
+                                onAccepted: {
+                                    if (text.trim().length > 0) {
+                                        root.customInputSubmitted(text.trim());
+                                        text = "";
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            width: 22
+                            height: 22
+                            radius: 11
+                            color: sendBtnMouse.containsMouse ?
+                                root.getToken("primary", "#d0bcff") : root.getToken("surfaceContainerHighest", "#363435")
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "send"
+                                font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                                font.pixelSize: 12
+                                color: sendBtnMouse.containsMouse ?
+                                    root.getToken("onPrimary", "#381e72") : root.getToken("onSurface", "#e6e1e1")
+                            }
+
+                            MouseArea {
+                                id: sendBtnMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (customPromptInput.text.trim().length > 0) {
+                                        root.customInputSubmitted(customPromptInput.text.trim());
+                                        customPromptInput.text = "";
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

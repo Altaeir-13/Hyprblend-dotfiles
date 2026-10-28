@@ -151,8 +151,10 @@ def get_protected_reverse_dependencies(pkg_name: str) -> list[str]:
         return []
 
     try:
+        pacman_bin = get_safe_bin("REDSHIFT_PACMAN_BIN", "/usr/bin/pacman")
+        conf_args = get_safe_pacman_conf()
         res = subprocess.run(
-            ["/usr/bin/pacman", "-Qi", "--", clean_name],
+            [pacman_bin, *conf_args, "-Qi", "--", clean_name],
             capture_output=True,
             text=True,
             timeout=2,
@@ -290,6 +292,29 @@ def ensure_polkit_agent() -> bool:
     return False
 
 
+SAFE_PATH_RE = re.compile(r"^/[a-zA-Z0-9_\-\./]+$")
+
+
+def get_safe_bin(env_var: str, default: str) -> str:
+    """Resolve binary path with support for test environment overrides and strict path validation."""
+    val = os.environ.get(env_var, "").strip()
+    if not val:
+        return default
+    if not val.startswith("/") or " " in val or not SAFE_PATH_RE.match(val):
+        raise SecurityViolationError(f"Caminho customizado inválido ou inseguro para {env_var}: {val!r}")
+    return val
+
+
+def get_safe_pacman_conf() -> list[str]:
+    """Retrieve optional pacman config path if REDSHIFT_PACMAN_CONF is set."""
+    conf = os.environ.get("REDSHIFT_PACMAN_CONF", "").strip()
+    if not conf:
+        return []
+    if not conf.startswith("/") or " " in conf or not SAFE_PATH_RE.match(conf):
+        raise SecurityViolationError(f"Caminho customizado de configuração pacman inválido: {conf!r}")
+    return ["--config", conf]
+
+
 def build_safe_pacman_install_cmd(pkg_names: Sequence[str]) -> list[str]:
     """Build a safe command argv list for installing official packages via pacman.
 
@@ -307,7 +332,10 @@ def build_safe_pacman_install_cmd(pkg_names: Sequence[str]) -> list[str]:
     if not pkg_names:
         raise SecurityViolationError("Package list cannot be empty for installation")
     validated = [ensure_valid_package_name(pkg) for pkg in pkg_names]
-    return ["/usr/bin/pkexec", "/usr/bin/pacman", "-S", "--needed", "--", *validated]
+    pkexec_bin = get_safe_bin("REDSHIFT_PKEXEC_BIN", "/usr/bin/pkexec")
+    pacman_bin = get_safe_bin("REDSHIFT_PACMAN_BIN", "/usr/bin/pacman")
+    conf_args = get_safe_pacman_conf()
+    return [pkexec_bin, pacman_bin, *conf_args, "-S", "--needed", "--", *validated]
 
 
 def build_safe_pacman_remove_cmd(pkg_names: Sequence[str], check_reverse_deps: bool = True) -> list[str]:
@@ -329,7 +357,10 @@ def build_safe_pacman_remove_cmd(pkg_names: Sequence[str], check_reverse_deps: b
         raise SecurityViolationError("Package list cannot be empty for removal")
 
     validated = [ensure_not_protected(pkg, check_reverse_deps=check_reverse_deps) for pkg in pkg_names]
-    return ["/usr/bin/pkexec", "/usr/bin/pacman", "-R", "--", *validated]
+    pkexec_bin = get_safe_bin("REDSHIFT_PKEXEC_BIN", "/usr/bin/pkexec")
+    pacman_bin = get_safe_bin("REDSHIFT_PACMAN_BIN", "/usr/bin/pacman")
+    conf_args = get_safe_pacman_conf()
+    return [pkexec_bin, pacman_bin, *conf_args, "-R", "--", *validated]
 
 
 def build_safe_pacman_sysupgrade_cmd() -> list[str]:
@@ -338,7 +369,10 @@ def build_safe_pacman_sysupgrade_cmd() -> list[str]:
     Returns:
         List of command arguments ready for QProcess/subprocess.
     """
-    return ["/usr/bin/pkexec", "/usr/bin/pacman", "-Syu"]
+    pkexec_bin = get_safe_bin("REDSHIFT_PKEXEC_BIN", "/usr/bin/pkexec")
+    pacman_bin = get_safe_bin("REDSHIFT_PACMAN_BIN", "/usr/bin/pacman")
+    conf_args = get_safe_pacman_conf()
+    return [pkexec_bin, pacman_bin, *conf_args, "-Syu"]
 
 
 def build_safe_yay_install_cmd(pkg_names: Sequence[str], euid: int | None = None) -> list[str]:
@@ -361,16 +395,16 @@ def build_safe_yay_install_cmd(pkg_names: Sequence[str], euid: int | None = None
     if not pkg_names:
         raise SecurityViolationError("Package list cannot be empty for AUR installation")
     validated = [ensure_valid_package_name(pkg) for pkg in pkg_names]
+    yay_bin = get_safe_bin("REDSHIFT_YAY_BIN", "/usr/bin/yay")
+    pkexec_bin = get_safe_bin("REDSHIFT_PKEXEC_BIN", "/usr/bin/pkexec")
     return [
-        "/usr/bin/yay",
+        yay_bin,
         "-S",
         "--needed",
         "--sudo",
-        "/usr/bin/pkexec",
-        "--answerclean",
-        "None",
-        "--answerdiff",
-        "None",
+        pkexec_bin,
+        "--cleanmenu",
+        "--diffmenu",
         "--",
         *validated,
     ]
@@ -388,13 +422,13 @@ def build_safe_yay_sysupgrade_cmd(euid: int | None = None) -> list[str]:
         List of command arguments ready for QProcess/subprocess.
     """
     ensure_non_root_for_aur(euid)
+    yay_bin = get_safe_bin("REDSHIFT_YAY_BIN", "/usr/bin/yay")
+    pkexec_bin = get_safe_bin("REDSHIFT_PKEXEC_BIN", "/usr/bin/pkexec")
     return [
-        "/usr/bin/yay",
+        yay_bin,
         "-Sua",
         "--sudo",
-        "/usr/bin/pkexec",
-        "--answerclean",
-        "None",
-        "--answerdiff",
-        "None",
+        pkexec_bin,
+        "--cleanmenu",
+        "--diffmenu",
     ]
