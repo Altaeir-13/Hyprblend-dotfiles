@@ -468,6 +468,11 @@ assert_file_exists "$sb_hyb/home/.local/bin/rice-lock" "Dispatcher rice-lock ins
 assert_file_exists "$sb_hyb/home/.config/hypr/hyprlock/status.sh" "Diretório hyprlock/ sincronizado"
 assert_file_exists "$sb_hyb/home/.config/illogical-impulse/installed_true" "Marcador installed_true gerado"
 assert_file_exists "$sb_hyb/home/.config/illogical-impulse/installed_listfile" "Manifesto installed_listfile gerado"
+assert_file_exists "$sb_hyb/home/.local/share/redshift-os/icons/redshift-symbolic-compact.svg" "Ícone Redshift OS compacto instalado em ~/.local/share/redshift-os/icons"
+assert_file_exists "$sb_hyb/home/.local/share/redshift-os/icons/redshift-compact-512.png" "Ícone Redshift OS 512px para lockscreen instalado em ~/.local/share/redshift-os/icons"
+assert_file_exists "$sb_hyb/home/.local/share/icons/redshift-symbolic.svg" "Ícone Redshift OS simbólico instalado no diretório padrão XDG icons"
+assert_file_exists "$sb_hyb/home/.config/fastfetch/config.jsonc" "Configuração do Fastfetch com identidade Redshift OS instalada"
+assert_file_exists "$sb_hyb/home/.config/fastfetch/redshift_logo.txt" "Logo ASCII Redshift OS instalado para Fastfetch"
 
 # Modify caelestia/shell.json as user and re-run installer (second execution)
 printf '{"user_modified_after_install": true}\n' > "$sb_hyb/home/.config/caelestia/shell.json"
@@ -665,6 +670,33 @@ EOF
 assert_eq "$(jq -r '.colours.onPrimaryContainer' "$XDG_STATE_HOME/caelestia/scheme.json")" "e5deff" "end4-theme-bridge.sh converte snake_case (#rrggbb) para camelCase (rrggbb)"
 assert_eq "$(cat "$XDG_STATE_HOME/caelestia/wallpaper/path.txt")" "$sb_hyb/home/wall-thumb.jpg" "end4-theme-bridge.sh usa thumbnailPath estático quando wallpaper é vídeo (.mp4)"
 
+# 6.6b Test Material You variant selection, normalization, and persistence in Caelestia
+mkdir -p "$XDG_STATE_HOME/quickshell/user/generated"
+printf 'scheme-fruit-salad\n' > "$XDG_STATE_HOME/quickshell/user/generated/applied_scheme_type.txt"
+printf 'fruitsalad\n' > "$XDG_STATE_HOME/quickshell/user/generated/palette_type_preference.txt"
+"$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/end4-theme-bridge.sh" >/dev/null
+assert_eq "$(jq -r '.variant' "$XDG_STATE_HOME/caelestia/scheme.json")" "fruitsalad" "end4-theme-bridge.sh propaga variante aplicada para scheme.json"
+assert_eq "$(jq -r '.variantPreference' "$XDG_STATE_HOME/caelestia/scheme.json")" "fruitsalad" "end4-theme-bridge.sh propaga preferência de variante para scheme.json"
+
+# Test Auto mode preference with tonalspot applied
+printf 'scheme-tonal-spot\n' > "$XDG_STATE_HOME/quickshell/user/generated/applied_scheme_type.txt"
+printf 'auto\n' > "$XDG_STATE_HOME/quickshell/user/generated/palette_type_preference.txt"
+"$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/end4-theme-bridge.sh" >/dev/null
+assert_eq "$(jq -r '.variant' "$XDG_STATE_HOME/caelestia/scheme.json")" "tonalspot" "end4-theme-bridge.sh registra variante concreta detectada em modo auto"
+assert_eq "$(jq -r '.variantPreference' "$XDG_STATE_HOME/caelestia/scheme.json")" "auto" "end4-theme-bridge.sh preserva preferência auto em scheme.json"
+
+# Test QML component presence and integration
+assert_file_exists "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/modules/nexus/pages/wallandstyle/PaletteVariantSelector.qml" "Componente PaletteVariantSelector.qml instalado"
+grep -q "openSubPage(3)" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/modules/nexus/pages/WallpaperAndStyle.qml" \
+    && pass "WallpaperAndStyle.qml direciona botão Colours para a página de cores" \
+    || fail "WallpaperAndStyle.qml direciona botão Colours para a página de cores"
+grep -q "PaletteVariantSelector" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/modules/nexus/pages/wallandstyle/ColourSelect.qml" \
+    && pass "ColourSelect.qml substitui placeholder e integra seletor de variantes" \
+    || fail "ColourSelect.qml substitui placeholder e integra seletor de variantes"
+grep -q "setVariant" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/services/Colours.qml" \
+    && pass "Colours.qml implementa setVariant para comunicação com backend" \
+    || fail "Colours.qml implementa setVariant para comunicação com backend"
+
 # 6.7 Test video-wallpaper-sync.sh (video, GIF vs static wallpaper)
 touch "$sb_hyb/home/animated.mp4" "$sb_hyb/home/animated.gif" "$sb_hyb/home/static.png"
 VIDEO_BRIDGE_LOG="$MOCK_STATE_DIR/video.log" \
@@ -756,6 +788,29 @@ assert_eq "$(cat "$XDG_STATE_HOME/quickshell/ui-switch/current")" "caelestia" "c
 grep -Fq "hyprctl reload" "$MOCK_STATE_DIR/hyprctl.log" \
     && pass "caelestia-runtime-binds.sh aciona hyprctl reload ao alternar binds" \
     || fail "caelestia-runtime-binds.sh aciona hyprctl reload ao alternar binds"
+
+# 6.10 Test Redshift OS Visual Identity, Continuous Rotation, and GameMode
+assert_file_exists "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/gamemode.py" "Script backend gamemode.py instalado"
+[[ -x "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/gamemode.py" ]] \
+    && pass "gamemode.py possui permissão de execução" \
+    || fail "gamemode.py sem permissão de execução"
+assert_file_exists "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/gamemode.sh" "Wrapper gamemode.sh instalado"
+[[ -x "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/gamemode.sh" ]] \
+    && pass "gamemode.sh possui permissão de execução" \
+    || fail "gamemode.sh sem permissão de execução"
+
+grep -q "RotationAnimation" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/modules/bar/components/OsIcon.qml" \
+    && pass "OsIcon.qml do Caelestia implementa rotação contínua RotationAnimation" \
+    || fail "OsIcon.qml sem rotação"
+grep -q "RotationAnimation" "$XDG_CONFIG_HOME/quickshell/ii/modules/ii/bar/LeftSidebarButton.qml" \
+    && pass "LeftSidebarButton.qml do end-4 implementa rotação contínua RotationAnimation" \
+    || fail "LeftSidebarButton.qml sem rotação"
+grep -q "Colouriser" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/modules/bar/components/OsIcon.qml" \
+    && pass "OsIcon.qml do Caelestia aplica Colouriser para tingimento dinâmico" \
+    || fail "OsIcon.qml sem Colouriser"
+grep -q "ColorOverlay" "$XDG_CONFIG_HOME/quickshell/ii/modules/ii/bar/LeftSidebarButton.qml" \
+    && pass "LeftSidebarButton.qml do end-4 aplica ColorOverlay para tingimento dinâmico" \
+    || fail "LeftSidebarButton.qml sem ColorOverlay"
 
 printf "\n${CLR_CYAN}=== 7. Validação Estática do PKGBUILD e Integridade Upstream Caelestia ===${CLR_RST}\n"
 
