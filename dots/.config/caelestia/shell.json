@@ -5,8 +5,8 @@
         }
     },
     "background": {
-        "wallpaperEnabled": false,
-        "enabled": true
+        "enabled": true,
+        "wallpaperEnabled": true
     },
     "bar": {
         "entries": [
@@ -88,17 +88,35 @@
         "apps": {
             "audio": [
                 "easyeffects"
+            ],
+            "terminal": [
+                "kitty"
             ]
+        }
+    },
+    "launcher": {
+        "showOnHover": false,
+        "useFuzzy": {
+            "actions": true,
+            "apps": true,
+            "schemes": true,
+            "variants": true,
+            "wallpapers": true
         }
     },
     "osd": {
         "enableBrightness": true,
         "enabled": true
     },
+    "paths": {
+        "sessionGif": "root:/assets/kurukuru.gif"
+    },
     "services": {
         "audioIncrement": 0.05,
         "brightnessIncrement": 0.05,
-        "maxVolume": 1.5
+        "clockFormat": "TwentyFourHour",
+        "maxVolume": 1.5,
+        "weatherUnits": "Celsius"
     },
     "session": {
         "enabled": true
@@ -112,8 +130,5 @@
             "recorder": true
         },
         "enabled": true
-    },
-    "paths": {
-        "sessionGif": "root:/assets/kurukuru.gif"
     }
 }

@@ -24,7 +24,7 @@ handle_kde_material_you_colors() {
     # Map $type_flag to allowed scheme variants for kde-material-you-colors-wrapper.sh
     local kde_scheme_variant=""
     case "$type_flag" in
-        scheme-content|scheme-expressive|scheme-fidelity|scheme-fruit-salad|scheme-monochrome|scheme-neutral|scheme-rainbow|scheme-tonal-spot)
+        scheme-content|scheme-expressive|scheme-fidelity|scheme-fruit-salad|scheme-monochrome|scheme-neutral|scheme-rainbow|scheme-tonal-spot|scheme-vibrant)
             kde_scheme_variant="$type_flag"
             ;;
         *)
@@ -323,9 +323,32 @@ main() {
     color_flag=""
     color=""
     noswitch_flag=""
+    explicit_type_flag=""
+
+    normalize_scheme_type() {
+        case "${1,,}" in
+            content|scheme-content) echo "scheme-content" ;;
+            expressive|scheme-expressive) echo "scheme-expressive" ;;
+            fidelity|scheme-fidelity) echo "scheme-fidelity" ;;
+            fruitsalad|fruit-salad|scheme-fruit-salad) echo "scheme-fruit-salad" ;;
+            monochrome|scheme-monochrome) echo "scheme-monochrome" ;;
+            neutral|scheme-neutral) echo "scheme-neutral" ;;
+            rainbow|scheme-rainbow) echo "scheme-rainbow" ;;
+            tonalspot|tonal-spot|scheme-tonal-spot) echo "scheme-tonal-spot" ;;
+            vibrant|scheme-vibrant) echo "scheme-vibrant" ;;
+            auto) echo "auto" ;;
+            *) echo "$1" ;;
+        esac
+    }
 
     get_type_from_config() {
         jq -r '.appearance.palette.type' "$SHELL_CONFIG_FILE" 2>/dev/null || echo "auto"
+    }
+    set_type_in_config() {
+        local type="$1"
+        if [[ -f "$SHELL_CONFIG_FILE" ]]; then
+            jq --arg type "$type" '.appearance.palette.type = $type' "$SHELL_CONFIG_FILE" > "$SHELL_CONFIG_FILE.tmp" && mv "$SHELL_CONFIG_FILE.tmp" "$SHELL_CONFIG_FILE"
+        fi
     }
     get_accent_color_from_config() {
         jq -r '.appearance.palette.accentColor' "$SHELL_CONFIG_FILE" 2>/dev/null || echo ""
@@ -349,7 +372,8 @@ main() {
                 shift 2
                 ;;
             --type)
-                type_flag="$2"
+                type_flag="$(normalize_scheme_type "$2")"
+                explicit_type_flag="$type_flag"
                 shift 2
                 ;;
             --color)
@@ -391,11 +415,11 @@ main() {
 
     # If type_flag is not set, get it from config
     if [[ -z "$type_flag" ]]; then
-        type_flag="$(get_type_from_config)"
+        type_flag="$(normalize_scheme_type "$(get_type_from_config)")"
     fi
 
     # Validate type_flag (allow 'auto' as well)
-    allowed_types=(scheme-content scheme-expressive scheme-fidelity scheme-fruit-salad scheme-monochrome scheme-neutral scheme-rainbow scheme-tonal-spot auto)
+    allowed_types=(scheme-content scheme-expressive scheme-fidelity scheme-fruit-salad scheme-monochrome scheme-neutral scheme-rainbow scheme-tonal-spot scheme-vibrant auto)
     valid_type=0
     for t in "${allowed_types[@]}"; do
         if [[ "$type_flag" == "$t" ]]; then
@@ -406,6 +430,11 @@ main() {
     if [[ $valid_type -eq 0 ]]; then
         echo "[switchwall.sh] Warning: Invalid type '$type_flag', defaulting to 'auto'" >&2
         type_flag="auto"
+    fi
+
+    local type_preference="$type_flag"
+    if [[ -n "$explicit_type_flag" && "$valid_type" -eq 1 ]]; then
+        set_type_in_config "$type_preference"
     fi
 
     # Only prompt for wallpaper if not using --color and not using --noswitch and no imgpath set
@@ -443,6 +472,10 @@ main() {
             type_flag="scheme-tonal-spot"
         fi
     fi
+
+    mkdir -p "$STATE_DIR/user/generated"
+    printf '%s\n' "$type_preference" > "$STATE_DIR/user/generated/palette_type_preference.txt"
+    printf '%s\n' "$type_flag" > "$STATE_DIR/user/generated/applied_scheme_type.txt"
 
     # If mode_flag is dark or light, try to find a variant with that mode suffix
     if [[ "$mode_flag" == "dark" || "$mode_flag" == "light" ]]; then
