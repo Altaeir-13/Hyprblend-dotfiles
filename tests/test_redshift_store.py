@@ -220,11 +220,16 @@ class TestSecurityGuardrails(unittest.TestCase):
             with self.assertRaises(SecurityViolationError):
                 build_safe_pacman_remove_cmd(["custom-wlroots-dep"])
 
-        # Polkit agent detection when pgrep succeeds vs fails
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "1234 /usr/lib/polkit-kde-authentication-agent-1\n"
-            self.assertTrue(is_polkit_agent_running())
+        # Polkit agent detection via proc_root sandbox
+        with tempfile.TemporaryDirectory() as tmp_proc:
+            self.assertFalse(is_polkit_agent_running(proc_root=tmp_proc))
+            fake_pid_dir = Path(tmp_proc) / "999999"
+            fake_pid_dir.mkdir()
+            (fake_pid_dir / "comm").write_text("polkit-kde-auth\n", encoding="utf-8")
+            (fake_pid_dir / "cmdline").write_bytes(b"/usr/lib/polkit-kde-authentication-agent-1\x00")
+            self.assertTrue(is_polkit_agent_running(proc_root=tmp_proc))
+
+        with patch("backend.security.is_polkit_agent_running", return_value=True):
             self.assertTrue(ensure_polkit_agent())
 
 

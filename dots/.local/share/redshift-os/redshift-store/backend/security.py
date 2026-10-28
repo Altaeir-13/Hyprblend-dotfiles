@@ -228,11 +228,11 @@ def ensure_non_root_for_aur(euid: int | None = None) -> None:
         raise SecurityViolationError("Running yay or makepkg as root is strictly forbidden for security reasons.")
 
 
-def is_polkit_agent_running() -> bool:
+def is_polkit_agent_running(proc_root: str = "/proc") -> bool:
     """Check if an active graphical Polkit authentication agent is running for the user session."""
     current_pid = os.getpid()
     try:
-        with os.scandir("/proc") as it:
+        with os.scandir(proc_root) as it:
             for entry in it:
                 if entry.is_dir() and entry.name.isdigit():
                     if int(entry.name) == current_pid:
