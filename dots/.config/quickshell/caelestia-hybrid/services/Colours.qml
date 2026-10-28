@@ -15,6 +15,9 @@ Singleton {
     property bool showPreview
     property string scheme
     property string flavour
+    property string variant: "tonalspot"
+    property string variantPreference: "auto"
+    readonly property bool isAuto: variantPreference === "auto"
     readonly property bool light: showPreview ? previewLight : currentLight
     property bool currentLight
     property bool previewLight
@@ -67,8 +70,16 @@ Singleton {
             root.scheme = scheme.name;
             flavour = scheme.flavour;
             currentLight = scheme.mode === "light";
+            if (scheme.variant)
+                root.variant = scheme.variant;
+            if (scheme.variantPreference)
+                root.variantPreference = scheme.variantPreference;
+            else if (scheme.variant)
+                root.variantPreference = scheme.variant;
         } else {
             previewLight = scheme.mode === "light";
+            if (scheme.variant)
+                root.variant = scheme.variant;
         }
 
         for (const [name, colour] of Object.entries(scheme.colours)) {
@@ -76,6 +87,34 @@ Singleton {
             if (colours.hasOwnProperty(propName))
                 colours[propName] = `#${colour}`;
         }
+    }
+
+    property string pendingVariant: ""
+
+    Timer {
+        id: variantDebounceTimer
+
+        interval: 120
+        repeat: false
+        onTriggered: {
+            if (root.pendingVariant !== "") {
+                const target = root.pendingVariant;
+                root.pendingVariant = "";
+                Quickshell.execDetached([
+                    Quickshell.shellPath("scripts/end4-theme-bridge.sh"),
+                    "--type",
+                    target,
+                    "--noswitch"
+                ]);
+            }
+        }
+    }
+
+    function setVariant(newVariant: string): void {
+        showPreview = false;
+        pendingVariant = newVariant;
+        variantPreference = newVariant;
+        variantDebounceTimer.restart();
     }
 
     function setMode(mode: string): void {

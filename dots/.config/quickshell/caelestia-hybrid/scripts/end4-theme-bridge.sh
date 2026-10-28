@@ -15,7 +15,133 @@ CAEL_WALL_DIR="$CAEL_STATE/wallpaper"
 CAEL_SCHEME="$CAEL_STATE/scheme.json"
 CAEL_WALL="$CAEL_WALL_DIR/path.txt"
 
+APPLIED_TYPE_FILE="$XDG_STATE_HOME/quickshell/user/generated/applied_scheme_type.txt"
+PREF_TYPE_FILE="$XDG_STATE_HOME/quickshell/user/generated/palette_type_preference.txt"
+
 mkdir -p "$CAEL_WALL_DIR"
+
+to_caelestia_variant() {
+    case "${1,,}" in
+        content|scheme-content) echo "content" ;;
+        expressive|scheme-expressive) echo "expressive" ;;
+        fidelity|scheme-fidelity) echo "fidelity" ;;
+        fruitsalad|fruit-salad|scheme-fruit-salad) echo "fruitsalad" ;;
+        monochrome|scheme-monochrome) echo "monochrome" ;;
+        neutral|scheme-neutral) echo "neutral" ;;
+        rainbow|scheme-rainbow) echo "rainbow" ;;
+        tonalspot|tonal-spot|scheme-tonal-spot) echo "tonalspot" ;;
+        vibrant|scheme-vibrant) echo "vibrant" ;;
+        auto) echo "auto" ;;
+        *) echo "tonalspot" ;;
+    esac
+}
+
+to_switchwall_type() {
+    case "${1,,}" in
+        content|scheme-content) echo "scheme-content" ;;
+        expressive|scheme-expressive) echo "scheme-expressive" ;;
+        fidelity|scheme-fidelity) echo "scheme-fidelity" ;;
+        fruitsalad|fruit-salad|scheme-fruit-salad) echo "scheme-fruit-salad" ;;
+        monochrome|scheme-monochrome) echo "scheme-monochrome" ;;
+        neutral|scheme-neutral) echo "scheme-neutral" ;;
+        rainbow|scheme-rainbow) echo "scheme-rainbow" ;;
+        tonalspot|tonal-spot|scheme-tonal-spot) echo "scheme-tonal-spot" ;;
+        vibrant|scheme-vibrant) echo "scheme-vibrant" ;;
+        auto) echo "auto" ;;
+        *) echo "scheme-tonal-spot" ;;
+    esac
+}
+
+# ------------------------------------------------------------
+# Modo de pré-visualização não destrutivo (--preview)
+# ------------------------------------------------------------
+if [[ "${1:-}" == "--preview" ]]; then
+    shift
+    preview_img=""
+    preview_type="auto"
+    preview_mode="dark"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --type)
+                preview_type="$2"
+                shift 2
+                ;;
+            --mode)
+                preview_mode="$2"
+                shift 2
+                ;;
+            *)
+                if [[ -z "$preview_img" ]]; then
+                    preview_img="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$preview_img" && -f "$CAEL_WALL" ]]; then
+        preview_img="$(head -n 1 "$CAEL_WALL" | tr -d '\r\n')"
+    fi
+
+    sw_type="$(to_switchwall_type "$preview_type")"
+    if [[ "$sw_type" == "auto" && -n "$preview_img" && -f "$preview_img" ]]; then
+        venv_path="${XDG_STATE_HOME}/quickshell/.venv"
+        if [[ -d "$venv_path" ]]; then
+            source "$venv_path/bin/activate"
+            detected="$("$XDG_CONFIG_HOME/quickshell/ii/scripts/colors/scheme_for_image.py" "$preview_img" 2>/dev/null || echo "scheme-tonal-spot")"
+            deactivate
+            sw_type="${detected:-scheme-tonal-spot}"
+        else
+            sw_type="scheme-tonal-spot"
+        fi
+    fi
+
+    cael_var="$(to_caelestia_variant "$sw_type")"
+    cael_pref="$(to_caelestia_variant "$preview_type")"
+
+    venv_path="${XDG_STATE_HOME}/quickshell/.venv"
+    if [[ -f "$preview_img" && -d "$venv_path" ]]; then
+        source "$venv_path/bin/activate"
+        raw_colors="$(python3 "$XDG_CONFIG_HOME/quickshell/ii/scripts/colors/generate_colors_material.py" \
+            --path "$preview_img" \
+            --scheme "$sw_type" \
+            --mode "$preview_mode" 2>/dev/null || true)"
+        deactivate
+
+        python3 - <<PY
+import json
+import re
+
+raw = """$raw_colors"""
+colours = {}
+for line in raw.splitlines():
+    line = line.strip()
+    if not line or not line.startswith("$"):
+        continue
+    parts = line.split(":", 1)
+    if len(parts) != 2:
+        continue
+    k = parts[0].lstrip("$").strip()
+    v = parts[1].rstrip(";").strip()
+    if v.startswith("#"):
+        camel = re.sub(r"_([a-z])", lambda m: m.group(1).upper(), k)
+        colours[camel] = v.lstrip("#")
+
+scheme = {
+    "name": "preview-dynamic",
+    "flavour": "end4",
+    "mode": "$preview_mode",
+    "variant": "$cael_var",
+    "variantPreference": "$cael_pref",
+    "colours": colours
+}
+print(json.dumps(scheme, indent=2))
+PY
+        exit 0
+    fi
+    exit 1
+fi
 
 # Se o bridge recebeu argumentos, eles pertencem ao
 # switchwall.sh original do end-4.
@@ -90,7 +216,25 @@ if command -v gsettings >/dev/null 2>&1; then
     fi
 fi
 
+# Determine applied variant and preference
+applied_type="scheme-tonal-spot"
+if [[ -f "$APPLIED_TYPE_FILE" ]]; then
+    applied_type="$(tr -d '\r\n' < "$APPLIED_TYPE_FILE")"
+fi
+
+type_pref="auto"
+if [[ -f "$PREF_TYPE_FILE" ]]; then
+    type_pref="$(tr -d '\r\n' < "$PREF_TYPE_FILE")"
+elif [[ -f "$END4_CONFIG" ]]; then
+    type_pref="$(jq -r '.appearance.palette.type // "auto"' "$END4_CONFIG" 2>/dev/null || echo "auto")"
+fi
+
+cael_variant="$(to_caelestia_variant "$applied_type")"
+cael_pref="$(to_caelestia_variant "$type_pref")"
+
 MODE="$mode" \
+VARIANT="$cael_variant" \
+VARIANT_PREFERENCE="$cael_pref" \
 END4_COLORS="$END4_COLORS" \
 CAEL_SCHEME="$CAEL_SCHEME" \
 python3 <<'PY'
@@ -102,6 +246,8 @@ from pathlib import Path
 source = Path(os.environ["END4_COLORS"])
 target = Path(os.environ["CAEL_SCHEME"])
 mode = os.environ["MODE"]
+variant = os.environ.get("VARIANT", "tonalspot")
+variant_preference = os.environ.get("VARIANT_PREFERENCE", "auto")
 
 FALLBACK_COLOURS = {
     "background": "141318",
@@ -188,6 +334,8 @@ scheme = {
     "name": scheme_name,
     "flavour": "end4",
     "mode": mode,
+    "variant": variant,
+    "variantPreference": variant_preference,
     "colours": colours
 }
 

@@ -1,5 +1,3 @@
-pragma ComponentBehavior: Bound
-
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Services.UPower
@@ -163,17 +161,47 @@ StyledRect {
 
         Logo {
             width: height
+            colored: false
+            animated: true
         }
     }
 
     Component {
         id: distroIcon
 
-        ColouredIcon {
-            source: SysInfo.osLogo
-            implicitSize: height
-            colour: Colours.palette.m3primary
-            layer.enabled: Config.lock.recolourLogo
+        Item {
+            anchors.centerIn: parent
+            width: height
+            height: width
+            transformOrigin: Item.Center
+
+            RotationAnimation on rotation {
+                from: 0
+                to: 360
+                duration: 8000
+                direction: RotationAnimation.Clockwise
+                loops: Animation.Infinite
+                running: root.visible
+            }
+
+            Image {
+                anchors.centerIn: parent
+                width: parent.width
+                height: parent.height
+                source: "file://" + Paths.home + "/.local/share/redshift-os/icons/redshift-symbolic-compact.svg"
+                fillMode: Image.PreserveAspectFit
+                sourceSize.width: 256
+                sourceSize.height: 256
+                mipmap: true
+                smooth: true
+                asynchronous: true
+                transformOrigin: Item.Center
+
+                layer.enabled: true
+                layer.effect: Colouriser {
+                    colorizationColor: Colours.palette.m3primary
+                }
+            }
         }
     }
 

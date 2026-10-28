@@ -1,4 +1,6 @@
 import QtQuick
+import Quickshell
+import Qt5Compat.GraphicalEffects
 import qs
 import qs.services
 import qs.modules.common
@@ -14,9 +16,9 @@ RippleButton {
     property bool animeEnabled: Config.options.policies.weeb !== 0
     visible: aiChatEnabled || translatorEnabled || animeEnabled
 
-    property real buttonPadding: 5
-    implicitWidth: distroIcon.width + buttonPadding * 2
-    implicitHeight: distroIcon.height + buttonPadding * 2
+    // Clickable area: 38x38 (within 36-44px reference range)
+    implicitWidth: 38
+    implicitHeight: 38
     buttonRadius: Appearance.rounding.full
     colBackgroundHover: Appearance.colors.colLayer1Hover
     colRipple: Appearance.colors.colLayer1Active
@@ -52,14 +54,39 @@ RippleButton {
         }
     }
 
-    CustomIcon {
-        id: distroIcon
+    Item {
+        id: iconWrapper
         anchors.centerIn: parent
-        width: 19.5
-        height: 19.5
-        source: Config.options.bar.topLeftIcon == 'distro' ? SystemInfo.distroIcon : `${Config.options.bar.topLeftIcon}-symbolic`
-        colorize: true
-        color: Appearance.colors.colOnLayer0
+        width: 28
+        height: 28
+        transformOrigin: Item.Center
+
+        RotationAnimation on rotation {
+            from: 0
+            to: 360
+            duration: 8000
+            direction: RotationAnimation.Clockwise
+            loops: Animation.Infinite
+            running: root.visible
+        }
+
+        Image {
+            id: emblemImage
+            anchors.fill: parent
+            source: "file://" + Quickshell.env("HOME") + "/.local/share/redshift-os/icons/redshift-symbolic-compact.svg"
+            sourceSize.width: 64
+            sourceSize.height: 64
+            fillMode: Image.PreserveAspectFit
+            mipmap: true
+            smooth: true
+            visible: false
+        }
+
+        ColorOverlay {
+            anchors.fill: emblemImage
+            source: emblemImage
+            color: Appearance.colors.colPrimary
+        }
 
         Rectangle {
             opacity: root.showPing ? 1 : 0

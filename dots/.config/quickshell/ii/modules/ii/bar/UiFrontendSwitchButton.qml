@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 
+import qs.services
 import qs.modules.common
 import qs.modules.common.widgets
 
@@ -41,5 +42,18 @@ RippleButton {
 
         verticalAlignment:
             Text.AlignVCenter
+    }
+
+    PopupToolTip {
+        id: tooltip
+        text: Translation.tr("Switch to Caelestia")
+        extraVisibleCondition: root.hovered
+        alternativeVisibleCondition: extraVisibleCondition
+        anchorEdges: {
+            if (Config.options.bar.vertical) {
+                return Config.options.bar.bottom ? Edges.Left : Edges.Right;
+            }
+            return Config.options.bar.bottom ? Edges.Top : Edges.Bottom;
+        }
     }
 }

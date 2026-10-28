@@ -1,11 +1,14 @@
-# Hyprland Hybrid Rice (`end-4 / illogical-impulse` + `Caelestia`)
+# Redshift OS — Hyprland Hybrid Rice (`end-4 / illogical-impulse` + `Caelestia`)
 
-Este repositório estende o [end-4/dots-hyprland (`illogical-impulse`)](https://github.com/end-4/dots-hyprland) com suporte nativo ao frontend [Caelestia Shell](https://github.com/caelestia-dots/shell), permitindo alternância em tempo real entre os dois ambientes sem perda de estado, conflito de atalhos ou dessincronização de temas/wallpapers.
+Este repositório oficial do **Redshift OS** (<https://github.com/Altaeir-13/RedshiftOS-dotfiles>) integra a identidade visual e ergonomia do sistema com o ecossistema [end-4/dots-hyprland (`illogical-impulse`)](https://github.com/end-4/dots-hyprland) e o frontend escultural [Caelestia Shell](https://github.com/caelestia-dots/shell), permitindo alternância em tempo real entre os dois ambientes sem perda de estado, conflito de atalhos ou dessincronização de temas/wallpapers.
 
 ---
 
 ## 1. Atribuição e Licenças
 
+* **Identidade Visual e Configurações Redshift OS:**
+  - Repositório Oficial: [Altaeir-13/RedshiftOS-dotfiles](https://github.com/Altaeir-13/RedshiftOS-dotfiles)
+  - Licença: `GPL-3.0`
 * **Base do Repositório e Frontend `ii` / `waffle`:**
   - Projeto: [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland)
   - Licença: `GPL-3.0` (ver [`LICENSE`](./LICENSE) e [`licenses/`](./licenses))
@@ -13,8 +16,8 @@ Este repositório estende o [end-4/dots-hyprland (`illogical-impulse`)](https://
   - Projeto: [caelestia-dots/shell](https://github.com/caelestia-dots/shell)
   - Revisão Upstream Fixada: `454f46da16ae75cc57f34adf48dea74db0fa5175` (`v2.5.0-6-g454f46da`)
   - Licença: `GPL-3.0-only` (ver [`dots/.config/quickshell/caelestia-hybrid/LICENSE`](./dots/.config/quickshell/caelestia-hybrid/LICENSE))
-* **Camada de Integração Híbrida (`ui-switch.sh`, `rice-lock`, bridges, `StatusCenter`, binds dinâmicos):**
-  - Desenvolvida especificamente para este rice híbrido e distribuída sob `GPL-3.0`.
+* **Camada de Integração Híbrida (`ui-switch.sh`, `rice-lock`, bridges, `StatusCenter`, binds dinâmicos, `gamemode`):**
+  - Desenvolvida especificamente para o Redshift OS e distribuída sob `GPL-3.0`.
 
 ---
 
@@ -37,7 +40,37 @@ Este repositório estende o [end-4/dots-hyprland (`illogical-impulse`)](https://
 
 ---
 
-## 3. Perfis do Instalador (`./setup`)
+## 3. Identidade Visual Redshift OS e Animações GPU
+
+1. **Símbolo Vetorial Unificado:**
+   - Centralizado em `~/.local/share/redshift-os/icons/`: dispõe de variantes vetoriais (`redshift-symbolic-compact.svg`, `redshift-symbolic.svg`) e renderizações em bitmap de 16px a 512px.
+   - Proporção geométrica padronizada e presença visual equivalente aos botões originais das barras.
+2. **Rotação GPU Nativa e Contínua:**
+   - Implementada através de `RotationAnimation` com `loops: Animation.Infinite` em 8 segundos por ciclo.
+   - Sem loop de processos externos, sem consumo ocioso e com pausa automática quando os componentes deixam de estar visíveis.
+3. **Tingimento Dinâmico de Cores:**
+   - No Caelestia: tingido com `Colours.palette.m3primary` via shader `Colouriser`.
+   - No end-4: tingido com `colPrimary` via `ColorOverlay`.
+   - Responde instantaneamente à alteração de wallpaper e de variante de cor Material You.
+4. **Fastfetch Personalizado:**
+   - Configuração pronta em `~/.config/fastfetch/config.jsonc` com arte ASCII da estrela flamejante em `redshift_logo.txt`.
+
+---
+
+## 4. Seletor de Variantes Material You e Game Mode
+
+1. **Seletor de Variantes no Caelestia Nexus (`PaletteVariantSelector.qml`):**
+   - Integrado à página `Settings > Wallpaper & style`.
+   - Suporta seleção entre: Auto, Content, Expressive, Fidelity, Fruit Salad, Monochrome, Neutral, Rainbow, Tonal Spot e Vibrant.
+   - Grava a preferência do usuário e aplica imediatamente no backend `matugen` sincronizando com o end-4.
+2. **Game Mode (`gamemode.py` + `gamemode.sh` + `GameMode.qml`):**
+   - Toggle disponível no menu de utilidades do Caelestia e via CLI.
+   - Desativa animações, cantos arredondados, gaps e bordas de janelas para garantir a menor latência em jogos.
+   - Salva o estado anterior atomicamente e restaura com fidelidade absoluta ao desativar.
+
+---
+
+## 5. Perfis do Instalador (`./setup`)
 
 O script `./setup` suporta três perfis declarativos (definidos em [`sdata/profiles/`](./sdata/profiles)):
 
