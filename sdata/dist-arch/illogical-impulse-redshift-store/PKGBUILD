@@ -1,0 +1,43 @@
+groups=(illogical-impulse)
+pkgname=illogical-impulse-redshift-store
+pkgver=1.0
+pkgrel=1
+pkgdesc='Illogical Impulse Redshift Store (Qt6/QML Software Center Dependencies)'
+arch=(any)
+license=(None)
+depends=(
+  python
+  python-pyqt6
+  qt6-base
+  qt6-declarative
+  qt6-svg
+  qt6-5compat
+  pacman-contrib
+  appstream
+  archlinux-appstream-data
+  python-gobject
+  polkit
+  polkit-kde-agent
+)
+
+package() {
+  local _repo_root
+  _repo_root="$(cd "${startdir}/../../.." 2>/dev/null && pwd || true)"
+  if [[ -d "${_repo_root}/dots/.local/share/redshift-os/redshift-store" ]]; then
+    install -dm755 "${pkgdir}/usr/share/redshift-os/redshift-store"
+    cp -r "${_repo_root}/dots/.local/share/redshift-os/redshift-store/main.py" "${pkgdir}/usr/share/redshift-os/redshift-store/"
+    cp -r "${_repo_root}/dots/.local/share/redshift-os/redshift-store/backend" "${pkgdir}/usr/share/redshift-os/redshift-store/"
+    cp -r "${_repo_root}/dots/.local/share/redshift-os/redshift-store/qml" "${pkgdir}/usr/share/redshift-os/redshift-store/"
+    find "${pkgdir}/usr/share/redshift-os/redshift-store" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+    chmod 755 "${pkgdir}/usr/share/redshift-os/redshift-store/main.py"
+  fi
+  if [[ -f "${_repo_root}/dots/.local/bin/redshift-store" ]]; then
+    install -Dm755 "${_repo_root}/dots/.local/bin/redshift-store" "${pkgdir}/usr/bin/redshift-store"
+  fi
+  if [[ -f "${_repo_root}/dots/.local/share/applications/redshift-store.desktop" ]]; then
+    install -Dm644 "${_repo_root}/dots/.local/share/applications/redshift-store.desktop" "${pkgdir}/usr/share/applications/redshift-store.desktop"
+  fi
+  if [[ -f "${_repo_root}/dots/.local/share/icons/redshift-store.svg" ]]; then
+    install -Dm644 "${_repo_root}/dots/.local/share/icons/redshift-store.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/redshift-store.svg"
+  fi
+}

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Redshift Store — Launcher Script
+# =============================================================================
+# Dispatches execution to the Redshift Store application (main.py).
+# Checks installed XDG_DATA_HOME path first, falls back to relative repository path.
+# =============================================================================
+
+set -euo pipefail
+
+XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+INSTALLED_MAIN="${XDG_DATA_HOME}/redshift-os/redshift-store/main.py"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RELATIVE_MAIN="$(cd "${SCRIPT_DIR}/../share/redshift-os/redshift-store" 2>/dev/null && pwd || true)/main.py"
+SYSTEM_MAIN="/usr/share/redshift-os/redshift-store/main.py"
+
+if [[ -f "$INSTALLED_MAIN" ]]; then
+    MAIN_PY="$INSTALLED_MAIN"
+elif [[ -f "$RELATIVE_MAIN" ]]; then
+    MAIN_PY="$RELATIVE_MAIN"
+elif [[ -f "$SYSTEM_MAIN" ]]; then
+    MAIN_PY="$SYSTEM_MAIN"
+else
+    printf "Error: Redshift Store main.py not found at:\n  - %s\n  - %s\n  - %s\n" "$INSTALLED_MAIN" "$RELATIVE_MAIN" "$SYSTEM_MAIN" >&2
+    exit 1
+fi
+
+exec python3 "$MAIN_PY" "$@"
