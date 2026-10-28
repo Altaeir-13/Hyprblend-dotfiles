@@ -68,7 +68,7 @@ jobs:
       - name: Install Test Prerequisites
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq rsync jq
+          sudo apt-get install -y -qq rsync jq python3-pyqt6 python3-pyqt6.qtquick qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-window qml6-module-qtquick-templates libgl1
 
       - name: Run Sandboxed Test Suite
         run: |

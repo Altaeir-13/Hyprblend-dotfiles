@@ -1515,15 +1515,17 @@ assert_not_exists "$sb_store/home/.local/bin/redshift-store" "Desinstalação Sa
 assert_not_exists "$sb_store/home/.local/share/applications/redshift-store.desktop" "Desinstalação Sandbox: redshift-store.desktop removido com base no installed_listfile"
 
 # 10.7 Automated Headless Self-Test and Python Unit Test Suite
-if QT_QPA_PLATFORM=offscreen "${REPO_ROOT}/dots/.local/bin/redshift-store" --mock --self-test >/dev/null 2>&1; then
+if selftest_out="$(QT_QPA_PLATFORM=offscreen "${REPO_ROOT}/dots/.local/bin/redshift-store" --mock --self-test 2>&1)"; then
     pass "Autoteste headless (redshift-store --mock --self-test) executado com status 0"
 else
+    printf "%s\n" "$selftest_out" >&2
     fail "Autoteste headless (redshift-store --mock --self-test) falhou"
 fi
 
-if QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s "${REPO_ROOT}/tests" -p "test_redshift_store.py" >/dev/null 2>&1; then
+if unittest_out="$(QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s "${REPO_ROOT}/tests" -p "test_redshift_store.py" 2>&1)"; then
     pass "Suíte de testes unitários Python e integração QML (test_redshift_store.py) aprovada"
 else
+    printf "%s\n" "$unittest_out" >&2
     fail "Suíte de testes unitários Python e integração QML (test_redshift_store.py) falhou"
 fi
 
