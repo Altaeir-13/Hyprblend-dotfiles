@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -835,7 +836,7 @@ class TestStoreControllerAndTransactions(unittest.TestCase):
         cat_srv.get_featured_packages = lambda: []
 
         def slow_check_updates():
-            time.sleep(0.4)
+            time.sleep(1.0)
             return [PackageItem(name="mock-update", version="2.0", installed_version="1.0", update_available=True)]
 
         cat_srv.check_updates = slow_check_updates
@@ -843,7 +844,7 @@ class TestStoreControllerAndTransactions(unittest.TestCase):
         t0 = time.time()
         ctrl = StoreController(catalog_service=cat_srv)
         t_init = time.time() - t0
-        self.assertLess(t_init, 0.35, f"StoreController.__init__ took too long: {t_init:.3f}s")
+        self.assertLess(t_init, 0.7, f"StoreController.__init__ took too long: {t_init:.3f}s")
         self.assertEqual(ctrl.updatesCount, 0)
 
         # Wait for background thread to complete and emit _updatesLoaded
@@ -1767,6 +1768,67 @@ class TestPackageUpdateAndLauncherResolution(unittest.TestCase):
                 self.assertEqual(len(blocked_msgs), 1)
                 self.assertIn("bloqueado", blocked_msgs[0].lower())
 
+
+# =============================================================================
+# 12. Teste de Regressão: Configuração Hyprland e render_power
+# =============================================================================
+class TestHyprlandConfigRegression(unittest.TestCase):
+    """Regression test ensuring Hyprland decoration.shadow.render_power <= 4.
+
+    Hyprland enforces render_power in range [1, 4]. Values > 4 trigger fatal
+    configuration errors (e.g. 'error setting decoration.shadow.render_power: value 10 is more than the maximum of 4').
+    """
+
+    def test_active_and_dots_render_power_within_bounds(self) -> None:
+        """Validate render_power in dots and active configuration does not exceed 4."""
+        repo_root = Path(__file__).resolve().parent.parent
+        dots_general = repo_root / "dots" / ".config" / "hypr" / "hyprland" / "general.lua"
+        self.assertTrue(dots_general.exists(), f"{dots_general} must exist")
+
+        content = dots_general.read_text(encoding="utf-8")
+        match = re.search(r"render_power\s*=\s*([0-9]+)", content)
+        self.assertIsNotNone(match, "render_power must be defined in general.lua")
+        val = int(match.group(1))
+        self.assertLessEqual(val, 4, f"render_power in dots must be <= 4, got {val}")
+        self.assertGreaterEqual(val, 1, f"render_power must be >= 1, got {val}")
+
+    def test_regression_render_power_greater_than_4_rejected(self) -> None:
+        """Verify doctor and validation logic reject render_power > 4 and accept <= 4."""
+        repo_root = Path(__file__).resolve().parent.parent
+        doctor_bin = repo_root / "dots" / ".local" / "bin" / "redshift-doctor"
+        self.assertTrue(doctor_bin.is_file() and os.access(doctor_bin, os.X_OK))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            cfg_dir = tmp / "hypr" / "hyprland"
+            cfg_dir.mkdir(parents=True)
+            gen_lua = cfg_dir / "general.lua"
+
+            # 1. Invalid configuration with render_power = 10 (rejected)
+            gen_lua.write_text("shadow = { render_power = 10 }\n", encoding="utf-8")
+            env = dict(os.environ, XDG_CONFIG_HOME=str(tmp))
+            res = subprocess.run(
+                [str(doctor_bin), "--check", "hyprland", "--json"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            data = json.loads(res.stdout)
+            self.assertEqual(data.get("status"), "error")
+            errs = [c for c in data.get("checks", []) if c.get("status") == "ERROR"]
+            self.assertTrue(any("excede o valor máximo permitido de 4" in c.get("message", "") for c in errs))
+
+            # 2. Valid configuration with render_power = 4 (accepted)
+            gen_lua.write_text("shadow = { render_power = 4 }\n", encoding="utf-8")
+            res_ok = subprocess.run(
+                [str(doctor_bin), "--check", "hyprland", "--json"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            data_ok = json.loads(res_ok.stdout)
+            errs_ok = [c for c in data_ok.get("checks", []) if c.get("status") == "ERROR"]
+            self.assertEqual(len(errs_ok), 0, f"Expected 0 errors for render_power=4, got: {errs_ok}")
 
 if __name__ == "__main__":
     unittest.main()
