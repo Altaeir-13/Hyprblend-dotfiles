@@ -76,7 +76,7 @@ Uso: redshift-doctor [OPÇÕES] [COMANDO] [ALVO]
 
 Comandos CLI:
   --check [ALVO]       Executa verificações de integridade (padrão: all).
-                       Alvos suportados: all, caelestia, quickshell, packages
+                       Alvos suportados: all, caelestia, quickshell, packages, hyprland, store
   --report             Gera relatório detalhado do ambiente e componentes.
   --repair caelestia   Executa reparo controlado do plugin/módulo Caelestia.
                        Exige confirmação interativa ou flag -y/--yes.
@@ -419,6 +419,150 @@ check_switch_readiness() {
     fi
 }
 
+# Check Hyprland configuration and render_power setting
+check_hyprland() {
+    # 1. Static check for general.lua and render_power <= 4
+    local gen_lua=""
+    local cand_paths=(
+        "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland/general.lua"
+        "$HOME/.config/hypr/hyprland/general.lua"
+        "dots/.config/hypr/hyprland/general.lua"
+    )
+    for p in "${cand_paths[@]}"; do
+        if [[ -f "$p" ]]; then
+            gen_lua="$p"
+            break
+        fi
+    done
+
+    if [[ -n "$gen_lua" ]]; then
+        local rp_val
+        rp_val="$(sed -nE 's/.*render_power[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$gen_lua" | head -n 1)"
+        if [[ -n "$rp_val" ]]; then
+            if (( rp_val <= 4 && rp_val >= 1 )); then
+                record OK "hyprland" "Configuração Hyprland (render_power)" "render_power=$rp_val está no limite válido (<= 4) em $gen_lua"
+            else
+                record ERROR "hyprland" "Configuração Hyprland (render_power)" "render_power=$rp_val excede o valor máximo permitido de 4 em $gen_lua"
+            fi
+        else
+            record WARN "hyprland" "Configuração Hyprland (render_power)" "Parâmetro render_power não identificado em $gen_lua"
+        fi
+    else
+        record WARN "hyprland" "Configuração Hyprland" "Arquivo general.lua não localizado nos caminhos padrão"
+    fi
+
+    # 2. Dynamic check via hyprctl configerrors
+    if command -v hyprctl >/dev/null 2>&1; then
+        local hypr_err
+        hypr_err="$(hyprctl configerrors 2>&1 || true)"
+        if echo "$hypr_err" | grep -qiE "socket|not running|No such file or directory|couldn't connect|failed to connect"; then
+            record OK "hyprland" "Sessão Hyprland (hyprctl)" "Instância Hyprland inativa ou socket não acessível no ambiente atual"
+        elif [[ -z "${hypr_err// /}" ]] || [[ "$hypr_err" =~ ^[[:space:]]*ok[[:space:]]*$ ]]; then
+            record OK "hyprland" "Erros de Configuração Hyprland" "Nenhum erro retornado por hyprctl configerrors"
+        else
+            local err_summary
+            err_summary="$(echo "$hypr_err" | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+            record ERROR "hyprland" "Erros de Configuração Hyprland" "Falha detectada via hyprctl configerrors: $err_summary"
+        fi
+    else
+        record WARN "hyprland" "Binário hyprctl" "hyprctl não encontrado no PATH"
+    fi
+}
+
+# Check Redshift Store versions and package sync status
+check_store_and_sync() {
+    # 1. Launcher check
+    local store_launcher=""
+    local cand_launchers=(
+        "${XDG_BIN_HOME:-$HOME/.local/bin}/redshift-store"
+        "$HOME/.local/bin/redshift-store"
+        "/usr/bin/redshift-store"
+        "dots/.local/bin/redshift-store"
+    )
+    for p in "${cand_launchers[@]}"; do
+        if [[ -f "$p" ]]; then
+            store_launcher="$p"
+            break
+        fi
+    done
+
+    if [[ -n "$store_launcher" ]] && [[ -x "$store_launcher" ]]; then
+        record OK "store" "Launcher Redshift Store" "Launcher executável localizado em $store_launcher"
+    else
+        record WARN "store" "Launcher Redshift Store" "Launcher redshift-store não encontrado ou sem permissão de execução"
+    fi
+
+    # 2. Store application & version check
+    local store_main=""
+    local cand_mains=(
+        "${XDG_DATA_HOME:-$HOME/.local/share}/redshift-os/redshift-store/main.py"
+        "$HOME/.local/share/redshift-os/redshift-store/main.py"
+        "/usr/share/redshift-os/redshift-store/main.py"
+        "dots/.local/share/redshift-os/redshift-store/main.py"
+    )
+    for p in "${cand_mains[@]}"; do
+        if [[ -f "$p" ]]; then
+            store_main="$p"
+            break
+        fi
+    done
+
+    if [[ -n "$store_main" ]]; then
+        local store_ver
+        store_ver="$(sed -nE 's/^[[:space:]]*VERSION[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'].*$/\1/p' "$store_main" | head -n 1)"
+        if [[ -n "$store_ver" ]]; then
+            record OK "store" "Versão da Redshift Store" "Versão $store_ver disponível ($store_main)"
+        else
+            record OK "store" "Arquivos da Redshift Store" "Backend localizado em $store_main"
+        fi
+    else
+        record WARN "store" "Backend Redshift Store" "main.py da Redshift Store não encontrado nos locais padrão"
+    fi
+
+    # Pacman package check if pacman is available
+    if command -v pacman >/dev/null 2>&1; then
+        local pkg_name="illogical-impulse-redshift-store"
+        if pacman -Q "$pkg_name" >/dev/null 2>&1; then
+            local p_ver
+            p_ver="$(pacman -Q "$pkg_name" 2>/dev/null | awk '{print $2}')"
+            record OK "store" "Pacote de Sistema Redshift Store" "Pacote $pkg_name instalado ($p_ver)"
+        fi
+    fi
+
+    # 3. Package sync cache & database status
+    local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}"
+    local sync_cache="$cache_dir/redshift-store/sync_index_v2.json"
+    local sync_dir="${REDSHIFT_PACMAN_SYNC_DIR:-/var/lib/pacman/sync}"
+
+    # Check pacman sync database
+    if [[ -d "$sync_dir" ]]; then
+        local db_count
+        db_count="$(find "$sync_dir" -maxdepth 1 -name "*.db" ! -name "*.sig" 2>/dev/null | wc -l || echo 0)"
+        if (( db_count > 0 )); then
+            local db_names
+            db_names="$(find "$sync_dir" -maxdepth 1 -name "*.db" ! -name "*.sig" -exec basename {} \; 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+            record OK "store" "Bases de Sincronização Pacman" "$db_count base(s) localizada(s) em $sync_dir: $db_names"
+        else
+            record WARN "store" "Bases de Sincronização Pacman" "Nenhuma base de pacotes (.db) encontrada em $sync_dir (execute 'pacman -Sy')"
+        fi
+    else
+        record WARN "store" "Diretório de Sincronização Pacman" "Diretório $sync_dir ausente ou inacessível"
+    fi
+
+    # Check Redshift Store sync cache index
+    if [[ -f "$sync_cache" ]]; then
+        local cache_size
+        cache_size="$(stat -c%s "$sync_cache" 2>/dev/null || stat -f%z "$sync_cache" 2>/dev/null || echo 0)"
+        if (( cache_size > 100 )); then
+            record OK "store" "Índice de Catálogo da Loja" "Cache persistente presente ($sync_cache, $cache_size bytes)"
+        else
+            record WARN "store" "Índice de Catálogo da Loja" "Cache persistente em $sync_cache aparenta estar vazio ou truncado"
+        fi
+    else
+        record OK "store" "Índice de Catálogo da Loja" "Cache local em $sync_cache não inicializado (será indexado automaticamente pela loja)"
+    fi
+}
+
 # Repair action for Caelestia
 repair_caelestia() {
     printf "%b\n" "${CLR_BOLD}=== Ação de Recuperação: Reparo do Caelestia ===${CLR_RESET}"
@@ -595,7 +739,7 @@ while [[ $# -gt 0 ]]; do
             show_help
             exit 0
             ;;
-        caelestia|quickshell|packages|all)
+        caelestia|quickshell|packages|hyprland|store|all)
             TARGET="$1"
             shift
             ;;
@@ -640,6 +784,12 @@ case "$TARGET" in
         check_packages
         check_update_markers
         ;;
+    hyprland)
+        check_hyprland
+        ;;
+    store)
+        check_store_and_sync
+        ;;
     all|*)
         check_update_markers
         check_end4
@@ -649,6 +799,8 @@ case "$TARGET" in
         check_quickshell
         check_scripts
         check_packages
+        check_hyprland
+        check_store_and_sync
         check_switch_readiness
         ;;
 esac
