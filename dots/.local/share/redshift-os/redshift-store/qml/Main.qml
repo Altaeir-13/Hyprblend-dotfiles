@@ -166,6 +166,27 @@ ApplicationWindow {
                 opacity: 0.35
             }
 
+            // Banner de Manutenção Condicional (Redshift Doctor / Caelestia)
+            MaintenanceBanner {
+                id: maintenanceBanner
+                objectName: "maintenanceBanner"
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                Layout.topMargin: (root.store && root.store.maintenanceRequired) ? 10 : 0
+                Layout.bottomMargin: (root.store && root.store.maintenanceRequired) ? 6 : 0
+                theme: appTheme
+                storeBridge: root.store
+
+                onViewDetailsClicked: maintenanceDialog.isOpen = true
+                onRunDoctorClicked: {
+                    if (root.store) root.store.runDoctorCheck();
+                }
+                onRepairClicked: {
+                    if (root.store) root.store.repairComponent("caelestia");
+                }
+            }
+
             // Stack de Páginas
             StackLayout {
                 id: pagesStack
@@ -327,6 +348,25 @@ ApplicationWindow {
             if (root.store) {
                 root.store.fetchPkgbuildPreview(pkg);
             }
+        }
+    }
+
+    // 3.1. Modal de Diagnóstico e Reparo de Manutenção (Overlay Dialog)
+    MaintenanceDetailDialog {
+        id: maintenanceDialog
+        objectName: "maintenanceDialog"
+        theme: appTheme
+        isOpen: false
+        title: root.store ? root.store.maintenanceTitle : ""
+        causeText: root.store ? root.store.maintenanceCause : ""
+        isRepairing: root.store ? root.store.isRepairing : false
+
+        onClosed: maintenanceDialog.isOpen = false
+        onRunDoctorRequested: {
+            if (root.store) root.store.runDoctorCheck();
+        }
+        onRepairRequested: {
+            if (root.store) root.store.repairComponent("caelestia");
         }
     }
 

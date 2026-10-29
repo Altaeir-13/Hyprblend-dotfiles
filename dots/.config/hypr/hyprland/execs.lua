@@ -22,4 +22,7 @@ hl.on("hyprland.start", function ()
 
     -- Cursor
     hl.exec_cmd("hyprctl setcursor Bibata-Modern-Classic 24")
+
+    -- Redshift Doctor: notification on system update marker
+    hl.exec_cmd("bash -c 'if [[ -f /tmp/.redshift-needs-doctor ]] || [[ -f \"${XDG_STATE_HOME:-$HOME/.local/state}/redshift-os/needs-health-check\" ]]; then notify-send -u normal -a \"Redshift Doctor\" \"Atualização de Sistema Detectada\" \"Pacotes Qt/Quickshell foram atualizados. Execute redshift-doctor --check para validar o ambiente.\" 2>/dev/null || true; fi'")
 end)

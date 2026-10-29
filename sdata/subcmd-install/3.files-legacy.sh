@@ -92,3 +92,4 @@ install_file "dots/.local/share/applications/redshift-store.desktop" "${XDG_DATA
 install_dir__sync "dots/.local/share/redshift-os" "${XDG_DATA_HOME}"/redshift-os
 install_file "dots/.local/bin/rice-lock" "${XDG_BIN_HOME}"/rice-lock
 install_file "dots/.local/bin/redshift-store" "${XDG_BIN_HOME}"/redshift-store
+install_file "dots/.local/bin/redshift-doctor" "${XDG_BIN_HOME}"/redshift-doctor

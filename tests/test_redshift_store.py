@@ -37,6 +37,7 @@ from PyQt6.QtCore import QUrl
 
 from backend import (
     CatalogService,
+    MaintenanceService,
     PackageItem,
     PackageListModel,
     PackageRoles,
@@ -920,6 +921,170 @@ class TestQmlHeadlessIntegration(unittest.TestCase):
 
         del engine
         app.processEvents()
+
+
+# =============================================================================
+# 7. Testes de Diagnóstico de Manutenção e Banner QML (TestRedshiftMaintenanceIntegration)
+# =============================================================================
+class TestRedshiftMaintenanceIntegration(unittest.TestCase):
+    """Validates MaintenanceService health diagnosis, repair routines, and QML integration."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        get_qt_app()
+
+    def test_maintenance_service_diagnosis_and_environmental_overrides(self) -> None:
+        """Verify mock diagnostic behavior and environmental override controls."""
+        service = MaintenanceService(mock_mode=True)
+        service.check_health(async_mode=False)
+        self.assertFalse(service.maintenance_required)
+        self.assertEqual(service.maintenance_title, "")
+
+        # Forced maintenance via environment variables
+        with patch.dict(
+            os.environ,
+            {
+                "REDSHIFT_MAINTENANCE_REQUIRED": "1",
+                "REDSHIFT_MAINTENANCE_TITLE": "Falha Caelestia Teste",
+                "REDSHIFT_MAINTENANCE_MESSAGE": "Mensagem de reparo teste.",
+                "REDSHIFT_MAINTENANCE_CAUSE": "Causa apurada no teste unitário.",
+            },
+        ):
+            service.check_health(async_mode=False)
+            self.assertTrue(service.maintenance_required)
+            self.assertEqual(service.maintenance_title, "Falha Caelestia Teste")
+            self.assertEqual(service.maintenance_message, "Mensagem de reparo teste.")
+            self.assertEqual(service.maintenance_cause, "Causa apurada no teste unitário.")
+
+    def test_maintenance_service_native_checks(self) -> None:
+        """Verify native Level 1 (missing plugin) and Level 2 (linker failure) detection."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            fake_home = tmp / "home"
+            fake_home.mkdir()
+            cael_cfg = fake_home / ".config" / "quickshell" / "caelestia-hybrid"
+            cael_cfg.mkdir(parents=True)
+
+            with patch("pathlib.Path.home", return_value=fake_home), patch.dict(
+                os.environ, {"CAELESTIA_QML_PATH": str(tmp / "empty_qml")}, clear=False
+            ):
+                # 1. Level 1: Caelestia plugin missing
+                service = MaintenanceService(mock_mode=False)
+                service.check_health(async_mode=False)
+                self.assertTrue(service.maintenance_required)
+                self.assertIn("Instalação incompleta ou ausente: plugin nativo Caelestia não encontrado", service.maintenance_cause)
+                self.assertIn("redshift-doctor --check caelestia", service.maintenance_cause)
+
+                # 2. Level 2: Plugin exists but ldd detects unresolved symbol
+                qml_dir = tmp / "fake_qml"
+                cael_dir = qml_dir / "Caelestia"
+                cael_dir.mkdir(parents=True)
+                (cael_dir / "qmldir").write_text("module Caelestia\n", encoding="utf-8")
+                so_file = cael_dir / "libcaelestia-coreplugin.so"
+                so_file.write_text("dummy binary", encoding="utf-8")
+
+                with patch.dict(os.environ, {"CAELESTIA_QML_PATH": str(qml_dir)}):
+                    def fake_which(cmd: str):
+                        return "/usr/bin/ldd" if cmd == "ldd" else None
+
+                    with patch("shutil.which", side_effect=fake_which), patch(
+                        "subprocess.run"
+                    ) as mock_subproc:
+                        mock_subproc.return_value.returncode = 0
+                        mock_subproc.return_value.stdout = "undefined symbol: _ZN10QByteArray..."
+                        mock_subproc.return_value.stderr = ""
+
+                        service.check_health(async_mode=False)
+                        self.assertTrue(service.maintenance_required)
+                        self.assertIn("Incompatibilidade detectada entre Caelestia e Qt6/Quickshell", service.maintenance_cause)
+                        self.assertIn("redshift-doctor --repair caelestia", service.maintenance_cause)
+
+    def test_store_controller_maintenance_properties_and_actions(self) -> None:
+        """Verify StoreController facade exposes maintenance signals, properties, and repair slots."""
+        app = get_qt_app()
+        with patch.dict(
+            os.environ,
+            {
+                "REDSHIFT_MAINTENANCE_REQUIRED": "1",
+                "REDSHIFT_MAINTENANCE_TITLE": "Reparo Necessário",
+                "REDSHIFT_MAINTENANCE_MESSAGE": "Frontend indisponível.",
+                "REDSHIFT_MAINTENANCE_CAUSE": "Causa detectada.",
+            },
+        ):
+            ctrl = StoreController(mock_mode=True)
+            self.assertTrue(ctrl.maintenanceRequired)
+            self.assertEqual(ctrl.maintenanceTitle, "Reparo Necessário")
+            self.assertEqual(ctrl.maintenanceMessage, "Frontend indisponível.")
+            self.assertEqual(ctrl.maintenanceCause, "Causa detectada.")
+            self.assertFalse(ctrl.isRepairing)
+
+            # Test repairComponent slot
+            with patch.dict(os.environ, {"REDSHIFT_MAINTENANCE_REQUIRED": "0"}):
+                ctrl.repairComponent("caelestia")
+                t0 = time.time()
+                while ctrl.isRepairing and (time.time() - t0) < 3.0:
+                    app.processEvents()
+                    time.sleep(0.01)
+
+                self.assertFalse(ctrl.isRepairing)
+
+    def test_qml_maintenance_banner_and_dialog_interaction(self) -> None:
+        """Verify headless instantiation of MaintenanceBanner and MaintenanceDetailDialog in Main.qml."""
+        app = get_qt_app()
+        qml_file = STORE_ROOT / "qml" / "Main.qml"
+
+        with patch.dict(
+            os.environ,
+            {
+                "REDSHIFT_MAINTENANCE_REQUIRED": "1",
+                "REDSHIFT_MAINTENANCE_TITLE": "Caelestia Indisponível",
+                "REDSHIFT_MAINTENANCE_MESSAGE": "Um componente do Redshift OS precisa de reparo após a atualização. O frontend Caelestia está temporariamente indisponível.",
+                "REDSHIFT_MAINTENANCE_CAUSE": "Incompatibilidade detectada entre Caelestia e Qt6/Quickshell. Execute 'redshift-doctor --repair caelestia'.",
+            },
+        ):
+            theme = ThemeService(parent=app)
+            store = StoreController(parent=app, mock_mode=True)
+
+            engine = QQmlApplicationEngine()
+            engine.addImageProvider("xdgicon", XdgIconImageProvider())
+            qml_dir = str(STORE_ROOT / "qml")
+            engine.addImportPath(qml_dir)
+            engine.addImportPath(os.path.join(qml_dir, "theme"))
+            engine.addImportPath(os.path.join(qml_dir, "components"))
+            engine.addImportPath(os.path.join(qml_dir, "pages"))
+
+            ctx = engine.rootContext()
+            ctx.setContextProperty("ThemeBridge", theme)
+            ctx.setContextProperty("StoreBridge", store)
+            ctx.setContextProperty("InitialPage", "home")
+
+            engine.load(QUrl.fromLocalFile(str(qml_file)))
+            app.processEvents()
+
+            root_objects = engine.rootObjects()
+            self.assertEqual(len(root_objects), 1)
+            root_window = root_objects[0]
+
+            from PyQt6.QtCore import QObject
+            banner = root_window.findChild(QObject, "maintenanceBanner")
+            self.assertIsNotNone(banner, "MaintenanceBanner must be present in Main.qml")
+            self.assertTrue(banner.property("visible"))
+            self.assertEqual(banner.property("bannerTitle"), "Caelestia Indisponível")
+            self.assertIn("frontend Caelestia está temporariamente indisponível", banner.property("bannerMessage"))
+
+            dialog = root_window.findChild(QObject, "maintenanceDialog")
+            self.assertIsNotNone(dialog, "MaintenanceDetailDialog must be present in Main.qml")
+            self.assertFalse(dialog.property("isOpen"))
+
+            # Trigger "Ver detalhes" click from banner
+            banner.viewDetailsClicked.emit()
+            app.processEvents()
+            self.assertTrue(dialog.property("isOpen"))
+            self.assertEqual(dialog.property("causeText"), store.maintenanceCause)
+            self.assertIn("redshift-doctor --repair caelestia", dialog.property("causeText"))
+
+            del engine
+            app.processEvents()
 
 
 if __name__ == "__main__":

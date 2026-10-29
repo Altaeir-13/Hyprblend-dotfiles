@@ -186,6 +186,15 @@ rice-lock
 ```
 O dispatcher detecta qual interface está em execução e aciona a rotina correta.
 
+### Diagnóstico e Resiliência (Redshift Doctor)
+Para diagnosticar a saúde dos componentes, plugins nativos e compatibilidade após atualizações do Arch Linux:
+```bash
+redshift-doctor --check           # Diagnóstico completo somente-leitura
+redshift-doctor --check caelestia  # Diagnóstico focado no Caelestia
+redshift-doctor --repair caelestia # Recuperação controlada e assistida
+```
+Consulte [`docs/REDSHIFT_DOCTOR.md`](file:///home/greyrat/Projetos/dots-hyprland/docs/REDSHIFT_DOCTOR.md) para detalhes completos da arquitetura de resiliência.
+
 ### Atualizando as Configurações
 Para atualizar o rice preservando customizações locais:
 ```bash

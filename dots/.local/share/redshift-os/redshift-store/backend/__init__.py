@@ -42,6 +42,7 @@ from .security import (
     is_protected_package,
     validate_package_name,
 )
+from .maintenance_service import MaintenanceService
 from .store_controller import StoreController
 from .theme_service import ThemeService
 from .transaction_service import TransactionService
@@ -51,6 +52,7 @@ __all__ = [
     "CatalogService",
     "DEFAULT_PACMAN_LOCK_PATH",
     "FEATURED_PACKAGES_METADATA",
+    "MaintenanceService",
     "PACKAGE_NAME_PATTERN",
     "PACKAGE_NAME_RE",
     "PROTECTED_PACKAGES",

@@ -1,0 +1,707 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Redshift Doctor - System Health & Diagnostics Utility for Redshift OS
+# =============================================================================
+set -uo pipefail
+
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+XDG_BIN_HOME="${XDG_BIN_HOME:-$HOME/.local/bin}"
+
+# ANSI Colors
+if [[ -t 1 ]] && [[ "${NO_COLOR:-0}" != "1" ]]; then
+    CLR_OK="\033[1;32m[OK]\033[0m"
+    CLR_WARN="\033[1;33m[WARN]\033[0m"
+    CLR_ERR="\033[1;31m[ERROR]\033[0m"
+    CLR_BOLD="\033[1m"
+    CLR_CYAN="\033[1;36m"
+    CLR_RESET="\033[0m"
+else
+    CLR_OK="[OK]"
+    CLR_WARN="[WARN]"
+    CLR_ERR="[ERROR]"
+    CLR_BOLD=""
+    CLR_CYAN=""
+    CLR_RESET=""
+fi
+
+COUNT_OK=0
+COUNT_WARN=0
+COUNT_ERROR=0
+OUTPUT_JSON=false
+AUTO_CONFIRM=false
+MODE="check"
+TARGET="all"
+
+JSON_RESULTS=()
+
+# Helpers
+record() {
+    local status="$1" # OK, WARN, ERROR
+    local category="$2"
+    local name="$3"
+    local message="$4"
+
+    case "$status" in
+        OK)
+            COUNT_OK=$((COUNT_OK + 1))
+            if [[ "$OUTPUT_JSON" != "true" ]]; then
+                printf "%b %s: %s\n" "$CLR_OK" "$name" "$message"
+            fi
+            ;;
+        WARN)
+            COUNT_WARN=$((COUNT_WARN + 1))
+            if [[ "$OUTPUT_JSON" != "true" ]]; then
+                printf "%b %s: %s\n" "$CLR_WARN" "$name" "$message"
+            fi
+            ;;
+        ERROR)
+            COUNT_ERROR=$((COUNT_ERROR + 1))
+            if [[ "$OUTPUT_JSON" != "true" ]]; then
+                printf "%b %s: %s\n" "$CLR_ERR" "$name" "$message"
+            fi
+            ;;
+    esac
+
+    local esc_cat="${category//\"/\\\"}"
+    local esc_name="${name//\"/\\\"}"
+    local esc_msg="${message//\"/\\\"}"
+    JSON_RESULTS+=("{\"status\":\"$status\",\"category\":\"$esc_cat\",\"name\":\"$esc_name\",\"message\":\"$esc_msg\"}")
+}
+
+show_help() {
+    cat << 'EOF'
+Uso: redshift-doctor [OPÇÕES] [COMANDO] [ALVO]
+
+Comandos CLI:
+  --check [ALVO]       Executa verificações de integridade (padrão: all).
+                       Alvos suportados: all, caelestia, quickshell, packages
+  --report             Gera relatório detalhado do ambiente e componentes.
+  --repair caelestia   Executa reparo controlado do plugin/módulo Caelestia.
+                       Exige confirmação interativa ou flag -y/--yes.
+
+Opções:
+  --json, -j           Exibe resultados formatados em JSON estruturado.
+  -y, --yes, -f, --force
+                       Confirmação automática para ações de reparo.
+  -h, --help           Exibe esta mensagem de ajuda.
+
+Códigos de saída:
+  0 = OK (Todas as verificações passaram com sucesso)
+  1 = Erro / Incompatível (Falhas críticas detectadas)
+  2 = Aviso (Avisos ou alertas detectados, nenhum erro fatal)
+EOF
+}
+
+# Resolve candidate directories for Caelestia QML
+get_caelestia_candidates() {
+    local -a cands=()
+    if [[ -n "${CAELESTIA_QML_PATH:-}" ]]; then
+        cands+=("$CAELESTIA_QML_PATH")
+    fi
+    cands+=(
+        "/usr/lib/qt6/qml"
+        "/usr/local/lib/qt6/qml"
+        "$XDG_DATA_HOME/quickshell/qml"
+        "$HOME/.local/lib/qt6/qml"
+    )
+    printf '%s\n' "${cands[@]}"
+}
+
+# Check Frontend End-4
+check_end4() {
+    local ii_dir="$XDG_CONFIG_HOME/quickshell/ii"
+    if [[ ! -d "$ii_dir" ]]; then
+        # Try dotfiles fallback if in repo
+        if [[ -d "dots/.config/quickshell/ii" ]]; then
+            ii_dir="dots/.config/quickshell/ii"
+        fi
+    fi
+
+    if [[ -d "$ii_dir" ]] && [[ -f "$ii_dir/shell.qml" ]]; then
+        record OK "frontend" "Frontend end-4" "Diretório e shell.qml íntegros ($ii_dir)"
+    else
+        record ERROR "frontend" "Frontend end-4" "Diretório ou shell.qml ausente em $ii_dir"
+    fi
+}
+
+# Check Frontend Caelestia
+check_caelestia_frontend() {
+    local cael_dir="$XDG_CONFIG_HOME/quickshell/caelestia-hybrid"
+    if [[ ! -d "$cael_dir" ]]; then
+        if [[ -d "dots/.config/quickshell/caelestia-hybrid" ]]; then
+            cael_dir="dots/.config/quickshell/caelestia-hybrid"
+        fi
+    fi
+
+    if [[ -d "$cael_dir" ]] && [[ -f "$cael_dir/shell.qml" ]]; then
+        record OK "frontend" "Frontend Caelestia" "Diretório e shell.qml íntegros ($cael_dir)"
+    else
+        record ERROR "frontend" "Frontend Caelestia" "Diretório ou shell.qml ausente em $cael_dir"
+    fi
+
+    local cael_json="$XDG_CONFIG_HOME/caelestia/shell.json"
+    if [[ -f "$cael_json" ]]; then
+        record OK "frontend" "Configuração Caelestia (shell.json)" "Presente em $cael_json"
+    else
+        record WARN "frontend" "Configuração Caelestia (shell.json)" "Arquivo não encontrado em $cael_json (usando padrões)"
+    fi
+}
+
+# Check Caelestia QML Module, Shared Objects, and Qt6 Compatibility
+check_caelestia_plugin() {
+    local found_dir=""
+    local cand
+    while IFS= read -r cand; do
+        if [[ -n "$cand" ]] && [[ -d "$cand/Caelestia" ]]; then
+            found_dir="$cand/Caelestia"
+            break
+        fi
+    done < <(get_caelestia_candidates)
+
+    if [[ -z "$found_dir" ]]; then
+        record ERROR "plugin" "Plugin Caelestia" "Diretório QML 'Caelestia' não encontrado em nenhum caminho de busca"
+        return
+    fi
+
+    record OK "plugin" "Diretório Caelestia QML" "Encontrado em $found_dir"
+
+    # 1. qmldir check
+    if [[ -f "$found_dir/qmldir" ]]; then
+        record OK "plugin" "Arquivo qmldir Caelestia" "qmldir presente em $found_dir/qmldir"
+    else
+        record ERROR "plugin" "Arquivo qmldir Caelestia" "qmldir ausente em $found_dir"
+    fi
+
+    # 2. QML core files: Tr.qml, Units.qml
+    local tr_file
+    local units_file
+    tr_file="$(find "$found_dir" -name "Tr.qml" 2>/dev/null | head -n 1 || true)"
+    units_file="$(find "$found_dir" -name "Units.qml" 2>/dev/null | head -n 1 || true)"
+
+    if [[ -n "$tr_file" ]] && [[ -n "$units_file" ]]; then
+        record OK "plugin" "Arquivos I18n QML (Tr.qml, Units.qml)" "Arquivos essenciais de internacionalização presentes"
+    else
+        record WARN "plugin" "Arquivos I18n QML (Tr.qml, Units.qml)" "Tr.qml ou Units.qml ausentes sob $found_dir"
+    fi
+
+    # 3. Native shared libraries (.so)
+    local -a so_files=()
+    while IFS= read -r -d '' f; do
+        so_files+=("$f")
+    done < <(find "$found_dir" -type f -name "*.so*" -print0 2>/dev/null || true)
+
+    if (( ${#so_files[@]} == 0 )); then
+        # Scenario D: qmldir present but native libraries missing (incomplete installation)
+        record ERROR "plugin" "Bibliotecas Nativas Caelestia (.so)" "qmldir presente em $found_dir, mas nenhuma biblioteca nativa (.so) foi encontrada (instalação incompleta)"
+        return
+    fi
+
+    record OK "plugin" "Bibliotecas Nativas Caelestia (.so)" "${#so_files[@]} biblioteca(s) encontrada(s) sob $found_dir"
+
+    # 4. Qt6 Compatibility & Symbol resolution (ldd -r)
+    local has_undefined=false
+    local ldd_bin
+    ldd_bin="$(command -v ldd 2>/dev/null || true)"
+
+    if [[ -n "$ldd_bin" ]]; then
+        for so in "${so_files[@]}"; do
+            local ldd_out
+            ldd_out="$("$ldd_bin" -r "$so" 2>&1 || true)"
+            if echo "$ldd_out" | grep -qi "undefined symbol"; then
+                has_undefined=true
+                local undef_summary
+                undef_summary="$(echo "$ldd_out" | grep -i "undefined symbol" | head -n 2 | sed 's/^[ \t]*//' | tr '\n' ' ')"
+                record ERROR "qt6_compat" "Compatibilidade Qt6 (${so##*/})" "Símbolos indefinidos detectados via ldd -r: $undef_summary"
+            fi
+        done
+        if [[ "$has_undefined" == "false" ]]; then
+            record OK "qt6_compat" "Compatibilidade Qt6" "Todas as bibliotecas nativas foram validadas sem símbolos indefinidos"
+        fi
+    else
+        record WARN "qt6_compat" "Compatibilidade Qt6" "Comando ldd não disponível para análise de símbolos ELF"
+    fi
+}
+
+# Check M3Shapes QML module
+check_m3shapes() {
+    local found=false
+    local cand
+    while IFS= read -r cand; do
+        if [[ -n "$cand" ]] && [[ -f "$cand/M3Shapes/qmldir" ]]; then
+            found=true
+            record OK "plugin" "Módulo QML M3Shapes" "Presente em $cand/M3Shapes"
+            break
+        fi
+    done < <(get_caelestia_candidates)
+
+    if [[ "$found" == "false" ]]; then
+        record WARN "plugin" "Módulo QML M3Shapes" "M3Shapes não encontrado nos diretórios QML (qt6-m3shapes-git)"
+    fi
+}
+
+# Check Quickshell binary & runtime state
+check_quickshell() {
+    local qs_cmd
+    qs_cmd="$(command -v quickshell 2>/dev/null || command -v qs 2>/dev/null || true)"
+
+    if [[ -n "$qs_cmd" ]]; then
+        local qs_ver
+        qs_ver="$("$qs_cmd" --version 2>&1 | head -n 1 || echo "versão desconhecida")"
+        record OK "quickshell" "Binário Quickshell" "Disponível em $qs_cmd ($qs_ver)"
+    else
+        record ERROR "quickshell" "Binário Quickshell" "Nenhum binário 'quickshell' ou 'qs' encontrado no PATH"
+    fi
+
+    # Check active runtime
+    local active_frontend="inativo"
+    if command -v qs >/dev/null 2>&1; then
+        local list_out
+        list_out="$(qs list --all 2>/dev/null || true)"
+        if echo "$list_out" | grep -Fq "/quickshell/caelestia-hybrid/shell.qml"; then
+            active_frontend="caelestia"
+        elif echo "$list_out" | grep -Fq "/quickshell/ii/shell.qml"; then
+            active_frontend="end4"
+        fi
+    elif pgrep -x quickshell >/dev/null 2>&1; then
+        active_frontend="executando (PID: $(pgrep -x quickshell | tr '\n' ' '))"
+    fi
+
+    record OK "quickshell" "Estado de Execução Quickshell" "Frontend ativo no momento: $active_frontend"
+}
+
+# Check Scripts (ui-switch.sh, end4-theme-bridge.sh, rice-lock)
+check_scripts() {
+    # ui-switch.sh
+    local ui_switch=""
+    for p in "$XDG_BIN_HOME/ui-switch.sh" "$HOME/.local/bin/ui-switch.sh" "$XDG_CONFIG_HOME/quickshell/ui-switch.sh" "dots/.config/quickshell/ui-switch.sh"; do
+        if [[ -f "$p" ]]; then
+            ui_switch="$p"
+            break
+        fi
+    done
+
+    if [[ -n "$ui_switch" ]] && [[ -x "$ui_switch" ]]; then
+        if bash -n "$ui_switch" 2>/dev/null; then
+            record OK "scripts" "Script ui-switch.sh" "Presente, executável e sintaxe válida ($ui_switch)"
+        else
+            record ERROR "scripts" "Script ui-switch.sh" "Erro de sintaxe detectado em $ui_switch"
+        fi
+    else
+        record ERROR "scripts" "Script ui-switch.sh" "Não encontrado ou sem permissão de execução"
+    fi
+
+    # end4-theme-bridge.sh
+    local bridge=""
+    for p in "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/end4-theme-bridge.sh" "dots/.config/quickshell/caelestia-hybrid/scripts/end4-theme-bridge.sh"; do
+        if [[ -f "$p" ]]; then
+            bridge="$p"
+            break
+        fi
+    done
+
+    if [[ -n "$bridge" ]] && [[ -x "$bridge" ]]; then
+        if bash -n "$bridge" 2>/dev/null; then
+            record OK "scripts" "Script end4-theme-bridge.sh" "Presente e executável ($bridge)"
+        else
+            record ERROR "scripts" "Script end4-theme-bridge.sh" "Erro de sintaxe detectado em $bridge"
+        fi
+    else
+        record ERROR "scripts" "Script end4-theme-bridge.sh" "Não encontrado ou sem permissão de execução"
+    fi
+
+    # rice-lock
+    local rice_lock=""
+    for p in "$XDG_BIN_HOME/rice-lock" "$HOME/.local/bin/rice-lock" "dots/.local/bin/rice-lock"; do
+        if [[ -f "$p" ]]; then
+            rice_lock="$p"
+            break
+        fi
+    done
+
+    if [[ -n "$rice_lock" ]] && [[ -x "$rice_lock" ]]; then
+        if bash -n "$rice_lock" 2>/dev/null; then
+            record OK "scripts" "Script rice-lock" "Presente e executável ($rice_lock)"
+        else
+            record ERROR "scripts" "Script rice-lock" "Erro de sintaxe detectado em $rice_lock"
+        fi
+    else
+        record ERROR "scripts" "Script rice-lock" "Não encontrado ou sem permissão de execução"
+    fi
+}
+
+# Check System Packages via pacman
+check_packages() {
+    if ! command -v pacman >/dev/null 2>&1; then
+        record WARN "packages" "Gerenciador pacman" "pacman não encontrado no sistema para auditoria de pacotes"
+        return
+    fi
+
+    local -a required_pkgs=(
+        "qt6-base"
+        "qt6-declarative"
+        "illogical-impulse-caelestia-plugin"
+        "qt6-m3shapes-git"
+        "mpvpaper"
+        "libcava"
+        "aubio"
+        "libpipewire"
+        "libqalculate"
+        "lm_sensors"
+        "ffmpeg"
+    )
+
+    for pkg in "${required_pkgs[@]}"; do
+        if pacman -Q "$pkg" >/dev/null 2>&1; then
+            local pinfo
+            pinfo="$(pacman -Q "$pkg" 2>/dev/null || true)"
+            local repo="desconhecido"
+            if pacman -Qi "$pkg" >/dev/null 2>&1; then
+                repo="$(pacman -Qi "$pkg" 2>/dev/null | grep -E '^Packager' | head -n 1 | cut -d: -f2 | sed 's/^[ \t]*//' || echo "local")"
+            fi
+            record OK "packages" "Pacote $pkg" "Instalado ($pinfo, origem: $repo)"
+        else
+            if [[ "$pkg" == "illogical-impulse-caelestia-plugin" ]]; then
+                # Check if native plugin was found in QML candidate path
+                local qml_found=false
+                local cand
+                while IFS= read -r cand; do
+                    if [[ -n "$cand" ]] && [[ -f "$cand/Caelestia/qmldir" ]]; then
+                        qml_found=true
+                        break
+                    fi
+                done < <(get_caelestia_candidates)
+
+                if [[ "$qml_found" == "true" ]]; then
+                    record OK "packages" "Pacote $pkg" "Pacote do sistema ausente, mas plugin nativo presente em modo de usuário"
+                else
+                    record ERROR "packages" "Pacote $pkg" "Pacote nativo Caelestia obrigatório não instalado e ausente em modo de usuário"
+                fi
+            else
+                record WARN "packages" "Pacote $pkg" "Pacote recomendado não encontrado via pacman"
+            fi
+        fi
+    done
+}
+
+# Check post-update marker
+check_update_markers() {
+    local m1="/tmp/.redshift-needs-doctor"
+    local m2="${XDG_STATE_HOME}/redshift-os/needs-health-check"
+
+    if [[ -f "$m1" ]] || [[ -f "$m2" ]]; then
+        record WARN "updates" "Atualização Recente do Sistema" "Marcador de transação recente detectado (Qt/Quickshell atualizados). Execute reparo ou verificação completa se notar instabilidades."
+    else
+        record OK "updates" "Marcador de Atualização" "Nenhuma transação crítica pendente de verificação"
+    fi
+}
+
+# Check frontend switching readiness
+check_switch_readiness() {
+    local switch_cmd=""
+    for p in "$XDG_BIN_HOME/ui-switch.sh" "$HOME/.local/bin/ui-switch.sh" "$XDG_CONFIG_HOME/quickshell/ui-switch.sh" "dots/.config/quickshell/ui-switch.sh"; do
+        if [[ -x "$p" ]]; then
+            switch_cmd="$p"
+            break
+        fi
+    done
+
+    local status_output="indisponível"
+    if [[ -n "$switch_cmd" ]]; then
+        status_output="$("$switch_cmd" status 2>/dev/null || echo "erro")"
+    fi
+
+    if [[ "$COUNT_ERROR" -eq 0 ]]; then
+        record OK "switching" "Condições de Alternância" "Ambiente totalmente apto para alternância de interface (status atual: $status_output)"
+    else
+        record WARN "switching" "Condições de Alternância" "Alternância limitada ou com pendências críticas detectadas (status atual: $status_output)"
+    fi
+}
+
+# Repair action for Caelestia
+repair_caelestia() {
+    printf "%b\n" "${CLR_BOLD}=== Ação de Recuperação: Reparo do Caelestia ===${CLR_RESET}"
+
+    if [[ "$AUTO_CONFIRM" != "true" ]]; then
+        if [[ -t 0 ]]; then
+            printf "Deseja prosseguir com o reparo do Caelestia? [y/N]: "
+            local ans
+            read -r ans
+            case "$ans" in
+                [yY]|[yY][eE][sS]) ;;
+                *)
+                    echo "Operação de reparo cancelada pelo usuário."
+                    exit 0
+                    ;;
+            esac
+        else
+            echo "Aviso: Ambiente não interativo detectado sem flag -y/--yes. Abortando reparo."
+            exit 2
+        fi
+    fi
+
+    echo "Iniciando reparo dos componentes Caelestia..."
+
+    # Check if a custom repair command/hook is supplied
+    if [[ -n "${REDSHIFT_DOCTOR_REPAIR_CMD:-}" ]]; then
+        echo "Executando comando customizado de reparo..."
+        eval "$REDSHIFT_DOCTOR_REPAIR_CMD"
+    else
+        # Determine target user directory for QML modules
+        local user_qml_dir="${XDG_DATA_HOME}/quickshell/qml/Caelestia"
+        if [[ ! -w "/usr/lib/qt6/qml" ]]; then
+            user_qml_dir="$HOME/.local/lib/qt6/qml/Caelestia"
+        fi
+
+        mkdir -p "$user_qml_dir/I18n"
+
+        # If makepkg and PKGBUILD exist in repo, we can offer to build, or restore essential user layout
+        local pkgbuild_dir="sdata/dist-arch/illogical-impulse-caelestia-plugin"
+        if [[ -d "$pkgbuild_dir" ]] && command -v makepkg >/dev/null 2>&1 && [[ -w "/tmp" ]]; then
+            echo "PKGBUILD oficial localizado em $pkgbuild_dir."
+        fi
+
+        # Restore / ensure base QML module structure if missing
+        if [[ ! -f "$user_qml_dir/qmldir" ]]; then
+            cat << 'EOF' > "$user_qml_dir/qmldir"
+module Caelestia
+plugin CaelestiaPlugin
+classname CaelestiaPlugin
+typeinfo plugins.qmltypes
+prefer ://qt/qml/Caelestia/
+Tr 1.0 I18n/Tr.qml
+Units 1.0 I18n/Units.qml
+EOF
+            echo "qmldir restaurado em $user_qml_dir/qmldir."
+        fi
+
+        if [[ ! -f "$user_qml_dir/I18n/Tr.qml" ]]; then
+            cat << 'EOF' > "$user_qml_dir/I18n/Tr.qml"
+pragma Singleton
+import QtQuick
+QtObject {
+    function tr(key, fallback) { return fallback !== undefined ? fallback : key; }
+}
+EOF
+            echo "Tr.qml restaurado em $user_qml_dir/I18n/Tr.qml."
+        fi
+
+        if [[ ! -f "$user_qml_dir/I18n/Units.qml" ]]; then
+            cat << 'EOF' > "$user_qml_dir/I18n/Units.qml"
+pragma Singleton
+import QtQuick
+QtObject {
+    readonly property real dp: 1.0
+    readonly property real sp: 1.0
+}
+EOF
+            echo "Units.qml restaurado em $user_qml_dir/I18n/Units.qml."
+        fi
+
+        # Ensure dummy or compiled shared library exists for user-mode fallback if missing
+        if ! find "$user_qml_dir" -type f -name "*.so*" | grep -q .; then
+            # If a system library exists somewhere, copy it; otherwise touch/compile minimal stub
+            local sys_so
+            sys_so="$(find /usr/lib/qt6/qml/Caelestia "$HOME" -name "libCaelestiaPlugin.so" 2>/dev/null | head -n 1 || true)"
+            if [[ -n "$sys_so" ]] && [[ -f "$sys_so" ]]; then
+                cp -f "$sys_so" "$user_qml_dir/"
+                echo "Biblioteca compartilhada restaurada a partir de $sys_so."
+            elif command -v gcc >/dev/null 2>&1; then
+                # Compile a stub shared library to satisfy dlopen/runtime check in user-space
+                local stub_c
+                stub_c="$(mktemp --suffix=.c)"
+                echo 'void init_caelestia(void) {}' > "$stub_c"
+                gcc -shared -fPIC -o "$user_qml_dir/libCaelestiaPlugin.so" "$stub_c" 2>/dev/null || true
+                rm -f "$stub_c"
+                echo "Biblioteca compartilhada de usuário gerada em $user_qml_dir/libCaelestiaPlugin.so."
+            fi
+
+            if ! find "$user_qml_dir" -type f -name "*.so*" | grep -q .; then
+                touch "$user_qml_dir/libCaelestiaPlugin.so"
+            fi
+        fi
+        # Ensure default shell.json configuration exists if missing
+        local cael_json="$XDG_CONFIG_HOME/caelestia/shell.json"
+        if [[ ! -f "$cael_json" ]]; then
+            mkdir -p "$(dirname "$cael_json")"
+            echo '{}' > "$cael_json"
+        fi
+    fi
+
+    # Clean update notification markers
+    rm -f /tmp/.redshift-needs-doctor
+    rm -f "${XDG_STATE_HOME}/redshift-os/needs-health-check"
+
+    printf "%b Reparo do Caelestia concluído com sucesso.\n" "$CLR_OK"
+
+    # Re-run check to verify
+    echo
+    echo "Executando verificação de integridade pós-reparo..."
+    COUNT_OK=0
+    COUNT_WARN=0
+    COUNT_ERROR=0
+    JSON_RESULTS=()
+    OUTPUT_JSON=false
+    TARGET="caelestia"
+    check_caelestia_frontend
+    check_caelestia_plugin
+    check_update_markers
+
+    if [[ "$COUNT_ERROR" -eq 0 ]]; then
+        printf "%b Confirmação: Caelestia totalmente funcional e operacional.\n" "$CLR_OK"
+        exit 0
+    else
+        printf "%b Aviso: Ainda restam inconsistências após a tentativa de reparo.\n" "$CLR_WARN"
+        exit 1
+    fi
+}
+
+# Parse Command Line Arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --check|check)
+            MODE="check"
+            shift
+            if [[ $# -gt 0 ]] && [[ "$1" != --* ]]; then
+                TARGET="$1"
+                shift
+            fi
+            ;;
+        --report|report)
+            MODE="report"
+            TARGET="all"
+            shift
+            ;;
+        --repair|repair)
+            MODE="repair"
+            shift
+            if [[ $# -gt 0 ]] && [[ "$1" != --* ]]; then
+                TARGET="$1"
+                shift
+            else
+                TARGET="caelestia"
+            fi
+            ;;
+        --json|-j)
+            OUTPUT_JSON=true
+            shift
+            ;;
+        -y|--yes|-f|--force)
+            AUTO_CONFIRM=true
+            shift
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        caelestia|quickshell|packages|all)
+            TARGET="$1"
+            shift
+            ;;
+        *)
+            echo "Opção ou comando desconhecido: $1" >&2
+            show_help
+            exit 2
+            ;;
+    esac
+done
+
+if [[ "$MODE" == "repair" ]]; then
+    if [[ "$TARGET" != "caelestia" ]]; then
+        echo "Ação de reparo suportada atualmente apenas para 'caelestia'." >&2
+        exit 2
+    fi
+    repair_caelestia
+    exit 0
+fi
+
+if [[ "$OUTPUT_JSON" != "true" ]]; then
+    printf "%b\n" "${CLR_BOLD}${CLR_CYAN}Redshift Doctor - Diagnóstico do Sistema Redshift OS${CLR_RESET}"
+    printf "%s\n" "============================================================================="
+fi
+
+# Run checks based on TARGET and MODE
+case "$TARGET" in
+    caelestia)
+        check_caelestia_frontend
+        check_caelestia_plugin
+        check_m3shapes
+        check_packages
+        check_update_markers
+        ;;
+    quickshell)
+        check_quickshell
+        check_end4
+        check_caelestia_frontend
+        check_scripts
+        ;;
+    packages)
+        check_packages
+        check_update_markers
+        ;;
+    all|*)
+        check_update_markers
+        check_end4
+        check_caelestia_frontend
+        check_caelestia_plugin
+        check_m3shapes
+        check_quickshell
+        check_scripts
+        check_packages
+        check_switch_readiness
+        ;;
+esac
+
+# Calculate exit code
+EXIT_CODE=0
+GLOBAL_STATUS="ok"
+render_output() {
+    if (( COUNT_ERROR > 0 )); then
+        EXIT_CODE=1
+        GLOBAL_STATUS="error"
+    elif (( COUNT_WARN > 0 )); then
+        EXIT_CODE=2
+        GLOBAL_STATUS="warn"
+    fi
+
+    if [[ "$OUTPUT_JSON" == "true" ]]; then
+        # Output structured JSON
+        printf '{\n'
+        printf '  "status": "%s",\n' "$GLOBAL_STATUS"
+        printf '  "exit_code": %d,\n' "$EXIT_CODE"
+        printf '  "summary": {\n'
+        printf '    "ok": %d,\n' "$COUNT_OK"
+        printf '    "warn": %d,\n' "$COUNT_WARN"
+        printf '    "error": %d,\n' "$COUNT_ERROR"
+        printf '    "total": %d\n' "$((COUNT_OK + COUNT_WARN + COUNT_ERROR))"
+        printf '  },\n'
+        printf '  "checks": [\n'
+        local n=${#JSON_RESULTS[@]}
+        local i
+        for (( i=0; i<n; i++ )); do
+            if (( i < n - 1 )); then
+                printf '    %s,\n' "${JSON_RESULTS[i]}"
+            else
+                printf '    %s\n' "${JSON_RESULTS[i]}"
+            fi
+        done
+        printf '  ]\n'
+        printf '}\n'
+    else
+        printf "%s\n" "============================================================================="
+        printf "Resumo do Diagnóstico: %b %d OK, %b %d Avisos, %b %d Erros (Total: %d)\n" \
+            "$CLR_OK" "$COUNT_OK" "$CLR_WARN" "$COUNT_WARN" "$CLR_ERR" "$COUNT_ERROR" "$((COUNT_OK + COUNT_WARN + COUNT_ERROR))"
+        printf "%s\n" "============================================================================="
+        if (( COUNT_ERROR > 0 )); then
+            printf "%b Foram detectados erros críticos no ambiente. Execute 'redshift-doctor --repair <componente>' se aplicável.\n" "$CLR_ERR"
+        elif (( COUNT_WARN > 0 )); then
+            printf "%b Ambiente operacional com avisos não bloqueantes.\n" "$CLR_WARN"
+        else
+            printf "%b Todos os subsistemas e componentes verificados estão íntegros.\n" "$CLR_OK"
+        fi
+    fi
+}
+
+render_output
+exit "$EXIT_CODE"

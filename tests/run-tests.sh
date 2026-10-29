@@ -121,8 +121,9 @@ create_sandbox() {
     local sb="$TEST_ROOT/$name"
     mkdir -p "$sb/home" "$sb/bin" "$sb/mock-state" "$sb/qml/Caelestia"
 
-    # Mock Caelestia QML plugin qmldir
+    # Mock Caelestia QML plugin qmldir and native library
     printf 'module Caelestia\n' > "$sb/qml/Caelestia/qmldir"
+    touch "$sb/qml/Caelestia/libcaelestia-coreplugin.so"
 
     # Mock `qs` (Quickshell CLI)
     cat > "$sb/bin/qs" <<'EOF'
@@ -1652,6 +1653,333 @@ EOF
     [[ "$res_inv" == *"Invalid REDSHIFT_STORE_SOURCE"* ]] || exit 8
 ) && pass "Resolução de coexistência semântica (versão, integridade e overrides) no launcher redshift-store" \
   || fail "Resolução de coexistência semântica no launcher redshift-store falhou"
+
+printf "\n${CLR_CYAN}=== 11. Redshift Doctor, Hook de Pacman e Testes de Resiliência/Alternância (Cenários A a I) ===${CLR_RST}\n"
+
+# Cenário A — Plugin ausente: O botão de alternância não deve encerrar o end-4
+(
+    sb_a="$(create_sandbox "scen-a")"
+    export PATH="$sb_a/bin:$PATH"
+    export MOCK_STATE_DIR="$sb_a/mock-state"
+    export HOME="$sb_a/home"
+    export XDG_CONFIG_HOME="$sb_a/home/.config"
+    export XDG_DATA_HOME="$sb_a/home/.local/share"
+    export XDG_STATE_HOME="$sb_a/home/.local/state"
+    export XDG_CACHE_HOME="$sb_a/home/.cache"
+    export XDG_BIN_HOME="$sb_a/home/.local/bin"
+
+    mkdir -p "$XDG_CONFIG_HOME/quickshell/ii" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts" "$XDG_STATE_HOME/quickshell/ui-switch"
+    touch "$XDG_CONFIG_HOME/quickshell/ii/shell.qml" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/shell.qml"
+    cp "${REPO_ROOT}/dots/.config/quickshell/ui-switch.sh" "$XDG_CONFIG_HOME/quickshell/ui-switch.sh"
+    chmod +x "$XDG_CONFIG_HOME/quickshell/ui-switch.sh"
+    echo '#!/usr/bin/env bash' > "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/end4-theme-bridge.sh"
+    chmod +x "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/end4-theme-bridge.sh"
+
+    touch "$MOCK_STATE_DIR/qs_ii_running"
+    printf 'end4\n' > "$XDG_STATE_HOME/quickshell/ui-switch/current"
+
+    mkdir -p "$sb_a/empty_qml"
+    export CAELESTIA_QML_ONLY="true"
+    export CAELESTIA_QML_PATH="$sb_a/empty_qml"
+    export UI_SWITCH_WAIT_ITERS=5
+    export UI_SWITCH_WAIT_SLEEP=0.01
+
+    if "$XDG_CONFIG_HOME/quickshell/ui-switch.sh" toggle >/dev/null 2>&1; then
+        exit 1
+    fi
+
+    [[ -f "$MOCK_STATE_DIR/qs_ii_running" ]] || exit 2
+    [[ ! -f "$MOCK_STATE_DIR/qs_cael_running" ]] || exit 3
+    [[ "$("$XDG_CONFIG_HOME/quickshell/ui-switch.sh" status)" == "end4" ]] || exit 4
+) && pass "Cenário A: Plugin ausente — O botão de alternância não encerra o end-4" \
+  || fail "Cenário A: Plugin ausente — Falha ao manter end-4 ativo"
+
+# Cenário B — Plugin instalado corretamente: A troca deve funcionar com sucesso
+(
+    sb_b="$(create_sandbox "scen-b")"
+    export PATH="$sb_b/bin:$PATH"
+    export MOCK_STATE_DIR="$sb_b/mock-state"
+    export HOME="$sb_b/home"
+    export XDG_CONFIG_HOME="$sb_b/home/.config"
+    export XDG_DATA_HOME="$sb_b/home/.local/share"
+    export XDG_STATE_HOME="$sb_b/home/.local/state"
+    export XDG_CACHE_HOME="$sb_b/home/.cache"
+    export XDG_BIN_HOME="$sb_b/home/.local/bin"
+
+    mkdir -p "$XDG_CONFIG_HOME/quickshell/ii" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts" "$XDG_STATE_HOME/quickshell/ui-switch"
+    touch "$XDG_CONFIG_HOME/quickshell/ii/shell.qml" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/shell.qml"
+    cp "${REPO_ROOT}/dots/.config/quickshell/ui-switch.sh" "$XDG_CONFIG_HOME/quickshell/ui-switch.sh"
+    chmod +x "$XDG_CONFIG_HOME/quickshell/ui-switch.sh"
+    echo '#!/usr/bin/env bash' > "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/end4-theme-bridge.sh"
+    chmod +x "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/end4-theme-bridge.sh"
+
+    mkdir -p "$sb_b/qml/Caelestia/I18n"
+    printf 'module Caelestia\n' > "$sb_b/qml/Caelestia/qmldir"
+    touch "$sb_b/qml/Caelestia/libcaelestia-coreplugin.so" "$sb_b/qml/Caelestia/I18n/Tr.qml" "$sb_b/qml/Caelestia/I18n/Units.qml"
+
+    export CAELESTIA_QML_PATH="$sb_b/qml"
+    export UI_SWITCH_WAIT_ITERS=5
+    export UI_SWITCH_WAIT_SLEEP=0.01
+    export UI_SWITCH_STABILITY_SLEEP=0.01
+
+    touch "$MOCK_STATE_DIR/qs_ii_running"
+    printf 'end4\n' > "$XDG_STATE_HOME/quickshell/ui-switch/current"
+
+    "$XDG_CONFIG_HOME/quickshell/ui-switch.sh" toggle >/dev/null || exit 1
+
+    [[ ! -f "$MOCK_STATE_DIR/qs_ii_running" ]] || exit 2
+    [[ -f "$MOCK_STATE_DIR/qs_cael_running" ]] || exit 3
+    [[ "$("$XDG_CONFIG_HOME/quickshell/ui-switch.sh" status)" == "caelestia" ]] || exit 4
+    [[ "$(cat "$XDG_STATE_HOME/quickshell/ui-switch/current")" == "caelestia" ]] || exit 5
+) && pass "Cenário B: Plugin instalado corretamente — A troca funciona com sucesso" \
+  || fail "Cenário B: Plugin instalado corretamente — A troca falhou"
+
+# Cenário C — Plugin instalado em caminho alternativo válido: A descoberta deve funcionar sem configurações manuais indevidas
+(
+    sb_c="$(create_sandbox "scen-c")"
+    export PATH="$sb_c/bin:$PATH"
+    export MOCK_STATE_DIR="$sb_c/mock-state"
+    export HOME="$sb_c/home"
+    export XDG_CONFIG_HOME="$sb_c/home/.config"
+    export XDG_DATA_HOME="$sb_c/home/.local/share"
+    export XDG_STATE_HOME="$sb_c/home/.local/state"
+    export XDG_CACHE_HOME="$sb_c/home/.cache"
+    export XDG_BIN_HOME="$sb_c/home/.local/bin"
+    unset CAELESTIA_QML_PATH CAELESTIA_QML_ONLY
+
+    alt_dir="$HOME/.local/lib/qt6/qml/Caelestia"
+    mkdir -p "$alt_dir/I18n"
+    printf 'module Caelestia\n' > "$alt_dir/qmldir"
+    touch "$alt_dir/libcaelestia-coreplugin.so" "$alt_dir/I18n/Tr.qml" "$alt_dir/I18n/Units.qml"
+
+    mkdir -p "$XDG_CONFIG_HOME/quickshell/ii" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts" "$XDG_STATE_HOME/quickshell/ui-switch"
+    touch "$XDG_CONFIG_HOME/quickshell/ii/shell.qml" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/shell.qml"
+    echo '#!/usr/bin/env bash' > "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/end4-theme-bridge.sh"
+    chmod +x "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/end4-theme-bridge.sh"
+
+    doc_out="$("${REPO_ROOT}/dots/.local/bin/redshift-doctor" --check caelestia 2>&1 || true)"
+    echo "$doc_out" | grep -Fq "$alt_dir" || exit 1
+
+    export UI_SWITCH_WAIT_ITERS=5
+    export UI_SWITCH_WAIT_SLEEP=0.01
+    export UI_SWITCH_STABILITY_SLEEP=0.01
+    touch "$MOCK_STATE_DIR/qs_ii_running"
+
+    "${REPO_ROOT}/dots/.config/quickshell/ui-switch.sh" caelestia >/dev/null || exit 2
+    [[ -f "$MOCK_STATE_DIR/qs_cael_running" ]] || exit 3
+) && pass "Cenário C: Plugin em caminho alternativo válido — Descoberta automática sem configuração manual" \
+  || fail "Cenário C: Plugin em caminho alternativo válido — Falha na descoberta automática"
+
+# Cenário D — qmldir presente, mas biblioteca nativa ausente: O diagnóstico deve identificar a instalação incompleta
+(
+    sb_d="$(create_sandbox "scen-d")"
+    export PATH="$sb_d/bin:$PATH"
+    export MOCK_STATE_DIR="$sb_d/mock-state"
+    export HOME="$sb_d/home"
+    export XDG_CONFIG_HOME="$sb_d/home/.config"
+    export XDG_DATA_HOME="$sb_d/home/.local/share"
+    export XDG_STATE_HOME="$sb_d/home/.local/state"
+    export XDG_CACHE_HOME="$sb_d/home/.cache"
+    export XDG_BIN_HOME="$sb_d/home/.local/bin"
+
+    mkdir -p "$sb_d/qml/Caelestia/I18n"
+    printf 'module Caelestia\n' > "$sb_d/qml/Caelestia/qmldir"
+    touch "$sb_d/qml/Caelestia/I18n/Tr.qml" "$sb_d/qml/Caelestia/I18n/Units.qml"
+    rm -f "$sb_d/qml/Caelestia/"*.so*
+
+    export CAELESTIA_QML_PATH="$sb_d/qml"
+    export CAELESTIA_QML_ONLY="true"
+
+    mkdir -p "$XDG_CONFIG_HOME/quickshell/ii" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid"
+    touch "$XDG_CONFIG_HOME/quickshell/ii/shell.qml" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/shell.qml"
+
+    doc_exit=0
+    doc_out="$("${REPO_ROOT}/dots/.local/bin/redshift-doctor" --check caelestia 2>&1)" || doc_exit=$?
+
+    [[ "$doc_exit" -eq 1 ]] || exit 1
+    echo "$doc_out" | grep -qi "instalação incompleta" || exit 2
+
+    json_out="$("${REPO_ROOT}/dots/.local/bin/redshift-doctor" --check caelestia --json 2>&1 || true)"
+    echo "$json_out" | grep -Fq '"status": "error"' || exit 3
+    echo "$json_out" | jq -e '.summary.error >= 1' >/dev/null 2>&1 || exit 4
+) && pass "Cenário D: qmldir presente mas biblioteca nativa ausente — Diagnóstico identifica instalação incompleta" \
+  || fail "Cenário D: qmldir presente mas biblioteca nativa ausente — Diagnóstico não identificou falha"
+
+# Cenário E — Incompatibilidade Qt6: O problema deve ser identificado e comunicado sem interromper a sessão
+(
+    sb_e="$(create_sandbox "scen-e")"
+    export PATH="$sb_e/bin:$PATH"
+    export MOCK_STATE_DIR="$sb_e/mock-state"
+    export HOME="$sb_e/home"
+    export XDG_CONFIG_HOME="$sb_e/home/.config"
+    export XDG_DATA_HOME="$sb_e/home/.local/share"
+    export XDG_STATE_HOME="$sb_e/home/.local/state"
+    export XDG_CACHE_HOME="$sb_e/home/.cache"
+    export XDG_BIN_HOME="$sb_e/home/.local/bin"
+
+    mkdir -p "$sb_e/qml/Caelestia"
+    printf 'module Caelestia\n' > "$sb_e/qml/Caelestia/qmldir"
+    touch "$sb_e/qml/Caelestia/libcaelestia-coreplugin.so"
+
+    cat > "$sb_e/bin/ldd" <<'EOF'
+#!/usr/bin/env bash
+echo "undefined symbol: _ZN9QQuickItem10itemChangeEN10QQuickItem17ItemChangeReasonE (./libcaelestia-coreplugin.so)"
+exit 0
+EOF
+    chmod +x "$sb_e/bin/ldd"
+
+    export CAELESTIA_QML_PATH="$sb_e/qml"
+    export CAELESTIA_QML_ONLY="true"
+    mkdir -p "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid"
+    touch "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/shell.qml"
+
+    doc_exit=0
+    doc_out="$("${REPO_ROOT}/dots/.local/bin/redshift-doctor" --check caelestia 2>&1)" || doc_exit=$?
+
+    [[ "$doc_exit" -eq 1 ]] || exit 1
+    echo "$doc_out" | grep -qi "símbolos indefinidos" || exit 2
+) && pass "Cenário E: Incompatibilidade Qt6 — Problema identificado e comunicado sem interromper a sessão" \
+  || fail "Cenário E: Incompatibilidade Qt6 — Problema não foi devidamente identificado"
+
+# Cenário F — Caelestia inicia e encerra imediatamente: O rollback deve restaurar o end-4
+(
+    sb_f="$(create_sandbox "scen-f")"
+    export PATH="$sb_f/bin:$PATH"
+    export MOCK_STATE_DIR="$sb_f/mock-state"
+    export HOME="$sb_f/home"
+    export XDG_CONFIG_HOME="$sb_f/home/.config"
+    export XDG_DATA_HOME="$sb_f/home/.local/share"
+    export XDG_STATE_HOME="$sb_f/home/.local/state"
+    export XDG_CACHE_HOME="$sb_f/home/.cache"
+    export XDG_BIN_HOME="$sb_f/home/.local/bin"
+
+    mkdir -p "$XDG_CONFIG_HOME/quickshell/ii" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts" "$XDG_STATE_HOME/quickshell/ui-switch"
+    touch "$XDG_CONFIG_HOME/quickshell/ii/shell.qml" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/shell.qml"
+    cp "${REPO_ROOT}/dots/.config/quickshell/ui-switch.sh" "$XDG_CONFIG_HOME/quickshell/ui-switch.sh"
+    chmod +x "$XDG_CONFIG_HOME/quickshell/ui-switch.sh"
+    echo '#!/usr/bin/env bash' > "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/end4-theme-bridge.sh"
+    chmod +x "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/scripts/end4-theme-bridge.sh"
+
+    export CAELESTIA_QML_PATH="$sb_f/qml"
+    export UI_SWITCH_WAIT_ITERS=5
+    export UI_SWITCH_WAIT_SLEEP=0.01
+    export UI_SWITCH_STABILITY_SLEEP=0.01
+
+    touch "$MOCK_STATE_DIR/qs_ii_running"
+    printf 'end4\n' > "$XDG_STATE_HOME/quickshell/ui-switch/current"
+
+    if MOCK_CAEL_CRASH_ON_SECOND_CHECK=1 "$XDG_CONFIG_HOME/quickshell/ui-switch.sh" toggle >/dev/null 2>&1; then
+        exit 1
+    fi
+
+    [[ -f "$MOCK_STATE_DIR/qs_ii_running" ]] || exit 2
+    [[ ! -f "$MOCK_STATE_DIR/qs_cael_running" ]] || exit 3
+    [[ "$("$XDG_CONFIG_HOME/quickshell/ui-switch.sh" status)" == "end4" ]] || exit 4
+    [[ "$(cat "$XDG_STATE_HOME/quickshell/ui-switch/current")" == "end4" ]] || exit 5
+) && pass "Cenário F: Caelestia inicia e encerra imediatamente — Rollback restaura end-4 com integridade" \
+  || fail "Cenário F: Caelestia inicia e encerra imediatamente — Rollback falhou"
+
+# Cenário G — Atualização de Qt/Quickshell: O sistema deve detectar a necessidade de nova verificação
+(
+    sb_g="$(create_sandbox "scen-g")"
+    export PATH="$sb_g/bin:$PATH"
+    export MOCK_STATE_DIR="$sb_g/mock-state"
+    export HOME="$sb_g/home"
+    export XDG_CONFIG_HOME="$sb_g/home/.config"
+    export XDG_DATA_HOME="$sb_g/home/.local/share"
+    export XDG_STATE_HOME="$sb_g/home/.local/state"
+    export XDG_CACHE_HOME="$sb_g/home/.cache"
+    export XDG_BIN_HOME="$sb_g/home/.local/bin"
+
+    hook_file="${REPO_ROOT}/sdata/dist-arch/redshift-doctor-check.hook"
+    [[ -f "$hook_file" ]] || exit 1
+    grep -q "Target = qt6-base" "$hook_file" || exit 2
+    grep -q "Target = quickshell" "$hook_file" || exit 3
+    grep -q "PostTransaction" "$hook_file" || exit 4
+
+    touch /tmp/.redshift-needs-doctor
+
+    mkdir -p "$XDG_CONFIG_HOME/quickshell/ii" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid"
+    touch "$XDG_CONFIG_HOME/quickshell/ii/shell.qml" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/shell.qml"
+    export CAELESTIA_QML_PATH="$sb_g/qml"
+
+    doc_exit=0
+    doc_out="$("${REPO_ROOT}/dots/.local/bin/redshift-doctor" --check packages 2>&1)" || doc_exit=$?
+
+    rm -f /tmp/.redshift-needs-doctor
+
+    [[ "$doc_exit" -eq 2 ]] || exit 5
+    echo "$doc_out" | grep -qi "Atualização Recente" || exit 6
+) && pass "Cenário G: Atualização de Qt/Quickshell — Marcador detectado e aviso emitido" \
+  || fail "Cenário G: Atualização de Qt/Quickshell — Falha na detecção do marcador"
+
+# Cenário H — Reparo concluído: O Redshift Doctor deve confirmar que o problema foi corrigido
+(
+    sb_h="$(create_sandbox "scen-h")"
+    export PATH="$sb_h/bin:$PATH"
+    export MOCK_STATE_DIR="$sb_h/mock-state"
+    export HOME="$sb_h/home"
+    export XDG_CONFIG_HOME="$sb_h/home/.config"
+    export XDG_DATA_HOME="$sb_h/home/.local/share"
+    export XDG_STATE_HOME="$sb_h/home/.local/state"
+    export XDG_CACHE_HOME="$sb_h/home/.cache"
+    export XDG_BIN_HOME="$sb_h/home/.local/bin"
+    unset CAELESTIA_QML_PATH CAELESTIA_QML_ONLY
+
+    mkdir -p "$XDG_CONFIG_HOME/quickshell/ii" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid"
+    touch "$XDG_CONFIG_HOME/quickshell/ii/shell.qml" "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid/shell.qml"
+
+    mkdir -p "$HOME/.local/lib/qt6/qml/M3Shapes"
+    touch "$HOME/.local/lib/qt6/qml/M3Shapes/qmldir"
+
+    touch /tmp/.redshift-needs-doctor
+    rm -rf "$HOME/.local/lib/qt6/qml/Caelestia"
+
+    "${REPO_ROOT}/dots/.local/bin/redshift-doctor" --repair caelestia -y >/dev/null || exit 1
+
+    [[ ! -f /tmp/.redshift-needs-doctor ]] || exit 2
+    [[ -f "$HOME/.local/lib/qt6/qml/Caelestia/qmldir" ]] || exit 3
+    [[ -f "$HOME/.local/lib/qt6/qml/Caelestia/I18n/Tr.qml" ]] || exit 4
+
+    "${REPO_ROOT}/dots/.local/bin/redshift-doctor" --check caelestia >/dev/null || exit 5
+) && pass "Cenário H: Reparo concluído — Redshift Doctor restaura ambiente e confirma sucesso" \
+  || fail "Cenário H: Reparo concluído — Falha no procedimento de reparo"
+
+# Cenário I — Instalação limpa: O perfil hybrid deve disponibilizar end-4 e Caelestia funcionais
+(
+    sb_i="$(create_sandbox "scen-i")"
+    export PATH="$sb_i/bin:$PATH"
+    export MOCK_STATE_DIR="$sb_i/mock-state"
+    export HOME="$sb_i/home"
+    export XDG_CONFIG_HOME="$sb_i/home/.config"
+    export XDG_DATA_HOME="$sb_i/home/.local/share"
+    export XDG_STATE_HOME="$sb_i/home/.local/state"
+    export XDG_CACHE_HOME="$sb_i/home/.cache"
+    export XDG_BIN_HOME="$sb_i/home/.local/bin"
+    export CAELESTIA_QML_PATH="$sb_i/qml"
+
+    iso_i="$(create_isolated_repo "scen-i-repo")"
+
+    "$iso_i/setup" install-files -p hybrid -f --skip-allgreeting >/dev/null
+
+    assert_file_exists "$XDG_BIN_HOME/redshift-doctor" "redshift-doctor instalado em XDG_BIN_HOME"
+    [[ -x "$XDG_BIN_HOME/redshift-doctor" ]] || exit 1
+    assert_file_exists "$XDG_BIN_HOME/ui-switch.sh" "ui-switch.sh instalado em XDG_BIN_HOME"
+    assert_dir_exists "$XDG_CONFIG_HOME/quickshell/ii" "Frontend end-4 instalado no perfil hybrid"
+    assert_dir_exists "$XDG_CONFIG_HOME/quickshell/caelestia-hybrid" "Frontend caelestia-hybrid instalado no perfil hybrid"
+    assert_file_exists "$XDG_STATE_HOME/quickshell/ui-switch/current" "Estado inicial de frontend configurado"
+    [[ "$(cat "$XDG_STATE_HOME/quickshell/ui-switch/current")" == "end4" ]] || exit 2
+
+    sb_min="$(create_sandbox "scen-i-min")"
+    HOME="$sb_min/home" XDG_CONFIG_HOME="$sb_min/home/.config" XDG_DATA_HOME="$sb_min/home/.local/share" \
+    XDG_STATE_HOME="$sb_min/home/.local/state" XDG_CACHE_HOME="$sb_min/home/.cache" XDG_BIN_HOME="$sb_min/home/.local/bin" \
+    PATH="$sb_min/bin:$PATH" MOCK_STATE_DIR="$sb_min/mock-state" \
+    "$iso_i/setup" install-files -p minimal -f --skip-allgreeting >/dev/null
+
+    assert_dir_exists "$sb_min/home/.config/quickshell/ii" "Perfil minimal instala quickshell/ii"
+    assert_not_exists "$sb_min/home/.config/quickshell/caelestia-hybrid" "Perfil minimal preserva ausência estrita de caelestia-hybrid"
+) && pass "Cenário I: Instalação limpa — Perfil hybrid disponibiliza ambos frontends e preserva perfil minimal" \
+  || fail "Cenário I: Instalação limpa — Inconsistência na instalação limpa de perfis"
 
 printf "\n=============================================================================\n"
 printf "Resumo dos Testes: ${CLR_GREEN}%d aprovados${CLR_RST}, ${CLR_RED}%d falharam${CLR_RST} (total: %d)\n" \
