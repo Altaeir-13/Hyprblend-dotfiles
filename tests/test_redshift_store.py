@@ -796,6 +796,35 @@ class TestStoreControllerAndTransactions(unittest.TestCase):
                 self.assertEqual(tx.state, "cancelled")
                 self.assertIn("Polkit", done["msg"])
 
+    def test_19_non_blocking_startup_check_updates(self) -> None:
+        """Verify startup checkUpdates does not block main thread in real mode."""
+        app = get_qt_app()
+        cat_srv = CatalogService(mock_mode=False)
+        cat_srv.refresh_installed = lambda: None
+        cat_srv.get_installed_packages = lambda **kwargs: []
+        cat_srv.get_featured_packages = lambda: []
+
+        def slow_check_updates():
+            time.sleep(0.4)
+            return [PackageItem(name="mock-update", version="2.0", installed_version="1.0", update_available=True)]
+
+        cat_srv.check_updates = slow_check_updates
+
+        t0 = time.time()
+        ctrl = StoreController(catalog_service=cat_srv)
+        t_init = time.time() - t0
+        self.assertLess(t_init, 0.15, f"StoreController.__init__ took too long: {t_init:.3f}s")
+        self.assertEqual(ctrl.updatesCount, 0)
+
+        # Wait for background thread to complete and emit _updatesLoaded
+        t_wait_start = time.time()
+        while ctrl.updatesCount == 0 and (time.time() - t_wait_start) < 2.0:
+            app.processEvents()
+            time.sleep(0.02)
+
+        self.assertEqual(ctrl.updatesCount, 1)
+        self.assertEqual(ctrl.updatesModel.get_at(0).name, "mock-update")
+
 
 # =============================================================================
 # 6. Testes de Integração Headless Qt6/QML (TestQmlHeadlessIntegration)

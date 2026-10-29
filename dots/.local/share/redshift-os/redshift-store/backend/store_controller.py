@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any
 
 from PyQt6.QtCore import QObject, pyqtProperty, pyqtSignal, pyqtSlot
@@ -79,6 +80,7 @@ class StoreController(QObject):
     pkgbuildPreviewChanged = pyqtSignal()
     promptChanged = pyqtSignal()
     toastMessage = pyqtSignal(str, str)  # (level: "info"|"success"|"warning"|"error", message: str)
+    _updatesLoaded = pyqtSignal(list)
 
     def __init__(
         self,
@@ -105,6 +107,10 @@ class StoreController(QObject):
         self._active_source_filter: str = "all"
         self._log_text: str = ""
         self._pkgbuild_preview: str = ""
+        self._checking_updates: bool = False
+
+        # Connect internal update signals
+        self._updatesLoaded.connect(self._on_updates_loaded)
 
         # Connect TransactionService signals
         self._tx_service.stateChanged.connect(self._on_tx_state_changed)
@@ -324,9 +330,26 @@ class StoreController(QObject):
     @pyqtSlot()
     def checkUpdates(self) -> None:
         """Scan for system updates via checkupdates and yay asynchronously."""
-        updates = self._catalog_service.check_updates()
-        self._updates_model.set_items(updates)
-        self.updatesChanged.emit()
+        if self._catalog_service.mock_mode:
+            updates = self._catalog_service.check_updates()
+            self._on_updates_loaded(updates)
+            return
+
+        if self._checking_updates:
+            return
+
+        self._checking_updates = True
+
+        def _worker() -> None:
+            try:
+                res = self._catalog_service.check_updates()
+            except Exception as e:
+                logger.warning("Error checking updates in background thread: %s", e)
+                res = []
+            self._updatesLoaded.emit(res)
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
 
     @pyqtSlot(str, str)
     def installPackage(self, pkg_name: str, repository: str = "official") -> None:
@@ -433,6 +456,12 @@ class StoreController(QObject):
     # -------------------------------------------------------------------------
     # Internal Signal Handlers
     # -------------------------------------------------------------------------
+
+    def _on_updates_loaded(self, updates: list) -> None:
+        """Apply updates list on the main Qt thread."""
+        self._checking_updates = False
+        self._updates_model.set_items(updates)
+        self.updatesChanged.emit()
 
     def _on_tx_state_changed(self, state: str, status_text: str) -> None:
         """Relay transaction state changes to QML."""
