@@ -1,7 +1,7 @@
 """Data models and QAbstractListModel for Redshift Store.
 
 Defines PackageItem dataclass conforming to REDSHIFT_STORE_ARCHITECTURE Section 3.1
-and PackageListModel providing reactive Qt6/QML list binding.
+and PackageListModel providing reactive Qt6/QML list binding with pagination and discovery roles.
 """
 
 from __future__ import annotations
@@ -24,9 +24,11 @@ from PyQt6.QtCore import (
 class PackageItem:
     """Represents a software package in Redshift Store.
 
-    Conforms to REDSHIFT_STORE_ARCHITECTURE.md Section 3.1 schema.
+    Conforms to REDSHIFT_STORE_ARCHITECTURE.md Section 3.1 schema, enriched with
+    discovery, AppStream screenshots, pkgstats popularity, provenance, and curation flags.
     """
 
+    # Core 23 fields from TASK-B1
     name: str = ""
     display_name: str = ""
     summary: str = ""
@@ -51,6 +53,18 @@ class PackageItem:
     maintainer: str = ""
     is_protected: bool = False
 
+    # 10 New Discovery & Rich Metadata fields for TASK-B2
+    is_application: bool = True
+    app_id: str = ""
+    screenshots: list[str] = field(default_factory=list)
+    popularity_source: str = ""  # "pkgstats" | "aur_rpc" | "curated" | ""
+    popularity_label: str = ""  # e.g., "69.1% pkgstats" or "1.711 votos · pop 13.0"
+    provenance: str = "repo"  # "editorial" | "pkgstats" | "aur_popular" | "personalized" | "appstream" | "pacman_sync"
+    provenance_label: str = ""  # e.g., "Selecionado pela curadoria Redshift OS"
+    is_favorite: bool = False
+    build_date: int = 0
+    groups: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary with both snake_case and camelCase keys for QML."""
         name_val = self.name
@@ -66,9 +80,9 @@ class PackageItem:
             "installed_version": self.installed_version,
             "repository": self.repository,
             "source": self.source,
-            "installed": self.installed,
-            "explicit": self.explicit,
-            "update_available": self.update_available,
+            "installed": bool(self.installed),
+            "explicit": bool(self.explicit),
+            "update_available": bool(self.update_available),
             "category": self.category,
             "icon_name": self.icon_name,
             "installed_size": self.installed_size,
@@ -81,6 +95,16 @@ class PackageItem:
             "popularity": float(self.popularity),
             "maintainer": self.maintainer,
             "is_protected": bool(self.is_protected),
+            "is_application": bool(self.is_application),
+            "app_id": self.app_id,
+            "screenshots": list(self.screenshots),
+            "popularity_source": self.popularity_source,
+            "popularity_label": self.popularity_label,
+            "provenance": self.provenance,
+            "provenance_label": self.provenance_label,
+            "is_favorite": bool(self.is_favorite),
+            "build_date": int(self.build_date),
+            "groups": list(self.groups),
             # camelCase aliases for direct QML property access
             "displayName": display_val,
             "installedVersion": self.installed_version,
@@ -89,6 +113,13 @@ class PackageItem:
             "installedSize": self.installed_size,
             "downloadSize": self.download_size,
             "isProtected": bool(self.is_protected),
+            "isApplication": bool(self.is_application),
+            "appId": self.app_id,
+            "popularitySource": self.popularity_source,
+            "popularityLabel": self.popularity_label,
+            "provenanceLabel": self.provenance_label,
+            "isFavorite": bool(self.is_favorite),
+            "buildDate": int(self.build_date),
         }
 
     @classmethod
@@ -118,11 +149,21 @@ class PackageItem:
             popularity=float(data.get("popularity", 0.0)),
             maintainer=str(data.get("maintainer", "")),
             is_protected=bool(data.get("isProtected", data.get("is_protected", False))),
+            is_application=bool(data.get("isApplication", data.get("is_application", True))),
+            app_id=str(data.get("appId", data.get("app_id", ""))),
+            screenshots=list(data.get("screenshots", [])),
+            popularity_source=str(data.get("popularitySource", data.get("popularity_source", ""))),
+            popularity_label=str(data.get("popularityLabel", data.get("popularity_label", ""))),
+            provenance=str(data.get("provenance", "repo")),
+            provenance_label=str(data.get("provenanceLabel", data.get("provenance_label", ""))),
+            is_favorite=bool(data.get("isFavorite", data.get("is_favorite", False))),
+            build_date=int(data.get("buildDate", data.get("build_date", 0))),
+            groups=list(data.get("groups", [])),
         )
 
 
 class PackageRoles:
-    """User roles for PackageListModel QML binding."""
+    """User roles for PackageListModel QML binding (total of 34 roles)."""
 
     NameRole = Qt.ItemDataRole.UserRole + 1
     DisplayNameRole = Qt.ItemDataRole.UserRole + 2
@@ -148,6 +189,18 @@ class PackageRoles:
     MaintainerRole = Qt.ItemDataRole.UserRole + 22
     IsProtectedRole = Qt.ItemDataRole.UserRole + 23
     ItemDataRole = Qt.ItemDataRole.UserRole + 24
+
+    # 10 New Discovery roles for TASK-B2
+    IsApplicationRole = Qt.ItemDataRole.UserRole + 25
+    AppIdRole = Qt.ItemDataRole.UserRole + 26
+    ScreenshotsRole = Qt.ItemDataRole.UserRole + 27
+    PopularitySourceRole = Qt.ItemDataRole.UserRole + 28
+    PopularityLabelRole = Qt.ItemDataRole.UserRole + 29
+    ProvenanceRole = Qt.ItemDataRole.UserRole + 30
+    ProvenanceLabelRole = Qt.ItemDataRole.UserRole + 31
+    IsFavoriteRole = Qt.ItemDataRole.UserRole + 32
+    BuildDateRole = Qt.ItemDataRole.UserRole + 33
+    GroupsRole = Qt.ItemDataRole.UserRole + 34
 
 
 class PackageListModel(QAbstractListModel):
@@ -230,10 +283,32 @@ class PackageListModel(QAbstractListModel):
         if role == PackageRoles.ItemDataRole:
             return item.to_dict()
 
+        # 10 New Discovery roles
+        if role == PackageRoles.IsApplicationRole:
+            return item.is_application
+        if role == PackageRoles.AppIdRole:
+            return item.app_id
+        if role == PackageRoles.ScreenshotsRole:
+            return list(item.screenshots)
+        if role == PackageRoles.PopularitySourceRole:
+            return item.popularity_source
+        if role == PackageRoles.PopularityLabelRole:
+            return item.popularity_label
+        if role == PackageRoles.ProvenanceRole:
+            return item.provenance
+        if role == PackageRoles.ProvenanceLabelRole:
+            return item.provenance_label
+        if role == PackageRoles.IsFavoriteRole:
+            return item.is_favorite
+        if role == PackageRoles.BuildDateRole:
+            return item.build_date
+        if role == PackageRoles.GroupsRole:
+            return list(item.groups)
+
         return None
 
     def roleNames(self) -> dict[int, QByteArray]:
-        """Return role names dictionary for QML model consumption."""
+        """Return role names dictionary for QML model consumption (34 roles)."""
         return {
             PackageRoles.NameRole: QByteArray(b"name"),
             PackageRoles.DisplayNameRole: QByteArray(b"displayName"),
@@ -259,6 +334,17 @@ class PackageListModel(QAbstractListModel):
             PackageRoles.MaintainerRole: QByteArray(b"maintainer"),
             PackageRoles.IsProtectedRole: QByteArray(b"isProtected"),
             PackageRoles.ItemDataRole: QByteArray(b"itemData"),
+            # 10 New roles for TASK-B2
+            PackageRoles.IsApplicationRole: QByteArray(b"isApplication"),
+            PackageRoles.AppIdRole: QByteArray(b"appId"),
+            PackageRoles.ScreenshotsRole: QByteArray(b"screenshots"),
+            PackageRoles.PopularitySourceRole: QByteArray(b"popularitySource"),
+            PackageRoles.PopularityLabelRole: QByteArray(b"popularityLabel"),
+            PackageRoles.ProvenanceRole: QByteArray(b"provenance"),
+            PackageRoles.ProvenanceLabelRole: QByteArray(b"provenanceLabel"),
+            PackageRoles.IsFavoriteRole: QByteArray(b"isFavorite"),
+            PackageRoles.BuildDateRole: QByteArray(b"buildDate"),
+            PackageRoles.GroupsRole: QByteArray(b"groups"),
         }
 
     # -------------------------------------------------------------------------
@@ -281,6 +367,22 @@ class PackageListModel(QAbstractListModel):
         self._items = list(items)
         self._name_index = {item.name: i for i, item in enumerate(self._items)}
         self.endResetModel()
+        self.countChanged.emit()
+
+    def append_items(self, items: Sequence[PackageItem]) -> None:
+        """Append items that are not already present in the model."""
+        new_items = [it for it in items if it.name not in self._name_index]
+        if not new_items:
+            return
+
+        start = len(self._items)
+        end = start + len(new_items) - 1
+
+        self.beginInsertRows(QModelIndex(), start, end)
+        for item in new_items:
+            self._name_index[item.name] = len(self._items)
+            self._items.append(item)
+        self.endInsertRows()
         self.countChanged.emit()
 
     def clear(self) -> None:

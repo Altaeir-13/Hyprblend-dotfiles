@@ -9,6 +9,7 @@ guarantees. Supports deterministic mock simulations when REDSHIFT_STORE_MOCK=1.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Sequence
 
@@ -75,6 +76,7 @@ class TransactionService(QObject):
     stageChanged = pyqtSignal()  # emitted when self._stage changes
     promptChanged = pyqtSignal()  # emitted when self._waiting_for_input or prompt text changes
     cancellationBlocked = pyqtSignal(str)  # emitted when cancel is attempted in unsafe stage
+    lastOutcomeChanged = pyqtSignal(str, str)  # (outcome, summary)
 
     def __init__(self, parent: QObject | None = None, mock_mode: bool | None = None) -> None:
         super().__init__(parent)
@@ -95,10 +97,39 @@ class TransactionService(QObject):
         self._mock_target_cmd: list[str] = []
         self._last_locked: bool | None = None
         self._recent_lines: list[str] = []
+        self._last_outcome: str = ""
+        self._last_summary: str = ""
 
     # -------------------------------------------------------------------------
     # Properties
     # -------------------------------------------------------------------------
+
+    @property
+    def last_outcome(self) -> str:
+        """Return post-verification outcome ('complete'|'partial'|'cancelled'|'failed'|'')."""
+        return self._last_outcome
+
+    @property
+    def last_summary(self) -> str:
+        """Return human-readable summary of the post-verification outcome."""
+        return self._last_summary
+
+    @pyqtProperty(str, notify=lastOutcomeChanged)
+    def lastOutcome(self) -> str:
+        """QML/Qt property for post-verification outcome."""
+        return self._last_outcome
+
+    @pyqtProperty(str, notify=lastOutcomeChanged)
+    def lastSummary(self) -> str:
+        """QML/Qt property for post-verification summary."""
+        return self._last_summary
+
+    @pyqtSlot(str, str)
+    def set_post_verification_outcome(self, outcome: str, summary: str) -> None:
+        """Set post-verification diagnostic outcome and emit lastOutcomeChanged."""
+        self._last_outcome = outcome
+        self._last_summary = summary
+        self.lastOutcomeChanged.emit(outcome, summary)
 
     @property
     def state(self) -> str:
@@ -253,13 +284,24 @@ class TransactionService(QObject):
             "remove", list(pkg_names), cmd, status, target_state="removing", initial_stage="authenticating"
         )
 
+    @pyqtSlot(str, result=bool)
     @pyqtSlot(str, str, result=bool)
-    def update_package(self, pkg_name: str, repository: str = "official") -> bool:
-        """Update a specific package."""
-        return self.update_packages([pkg_name], repository)
+    @pyqtSlot(str, str, bool, result=bool)
+    def update_package(
+        self, pkg_name: str, repository: str = "official", redirect_official_to_sysupgrade: bool = True
+    ) -> bool:
+        """Update a specific package, redirecting official packages to sysupgrade to prevent partial upgrades."""
+        return self.update_packages(
+            [pkg_name], repository=repository, redirect_official_to_sysupgrade=redirect_official_to_sysupgrade
+        )
 
-    def update_packages(self, pkg_names: Sequence[str], repository: str = "official") -> bool:
-        """Update a set of packages."""
+    def update_packages(
+        self,
+        pkg_names: Sequence[str],
+        repository: str = "official",
+        redirect_official_to_sysupgrade: bool = True,
+    ) -> bool:
+        """Update a set of packages, redirecting official packages to sysupgrade to prevent partial upgrades."""
         if self._is_busy:
             msg = "Uma operação de pacote já está em andamento. Aguarde a conclusão."
             self._emit_failure("update", msg)
@@ -269,6 +311,13 @@ class TransactionService(QObject):
             msg = "Banco de dados do pacman bloqueado (/var/lib/pacman/db.lck). Aguarde outra operação finalizar."
             self._emit_failure("update", msg)
             return False
+
+        if repository.lower() not in ("aur", "local-aur") and redirect_official_to_sysupgrade:
+            self.logLineReceived.emit(
+                "[SEGURANÇA ARCH LINUX] Atualizações isoladas de pacotes oficiais (partial upgrades) "
+                "não são suportadas no Arch Linux. Encaminhando para atualização completa e sincronizada do sistema (yay -Syu)..."
+            )
+            return self.update_all()
 
         try:
             if repository.lower() in ("aur", "local-aur"):
@@ -301,8 +350,25 @@ class TransactionService(QObject):
             self._emit_failure("update_all", msg)
             return False
 
+        use_pacman_fallback = False
+        if not self.mock_mode:
+            yay_bin_path = os.environ.get("REDSHIFT_YAY_BIN", "").strip() or "/usr/bin/yay"
+            pacman_bin_path = os.environ.get("REDSHIFT_PACMAN_BIN", "").strip() or "/usr/bin/pacman"
+            if not os.path.exists(yay_bin_path) and os.path.exists(pacman_bin_path):
+                use_pacman_fallback = True
+
         try:
-            cmd = build_safe_yay_sysupgrade_cmd()
+            if use_pacman_fallback:
+                cmd = build_safe_pacman_sysupgrade_cmd()
+                self.logLineReceived.emit(
+                    "[AVISO] Gerenciador yay não encontrado no sistema. "
+                    "Executando atualização via pacman (apenas repositórios oficiais: pacman -Syu)..."
+                )
+            else:
+                cmd = build_safe_yay_sysupgrade_cmd()
+                self.logLineReceived.emit(
+                    "[ATUALIZAÇÃO COMPLETA] Atualizando repositórios oficiais e AUR em sincronia (yay -Syu)..."
+                )
         except (SecurityViolationError, PermissionError) as e:
             msg = f"Falha de validação de segurança: {e}"
             self._emit_failure("update_all", msg)
@@ -338,7 +404,9 @@ class TransactionService(QObject):
             self._set_state("cancelled", "Operação cancelada pelo usuário")
             self._set_stage("idle")
             self._clear_prompt_state()
-            self.transactionFinished.emit(False, self._current_action, "Operação cancelada pelo usuário.")
+            cancel_msg = "Operação cancelada pelo usuário."
+            self.set_post_verification_outcome("cancelled", cancel_msg)
+            self.transactionFinished.emit(False, self._current_action, cancel_msg)
             self._current_action = ""
             self._current_packages = []
             return True
@@ -411,6 +479,9 @@ class TransactionService(QObject):
         self._stdout_buffer = ""
         self._recent_lines = []
         self._clear_prompt_state()
+        self._last_outcome = ""
+        self._last_summary = ""
+        self.lastOutcomeChanged.emit("", "")
         self._set_progress(-1)
         self._set_stage(initial_stage)
         self._set_state(target_state, status_text)
@@ -533,6 +604,9 @@ class TransactionService(QObject):
             self._set_progress(100)
             self._set_state("success", "Operação concluída com sucesso.")
             self.logLineReceived.emit("=== [SUCESSO] Operação finalizada com êxito ===")
+            self.set_post_verification_outcome(
+                "complete", "Operação concluída com código 0; verificando estado dos pacotes..."
+            )
             self.transactionFinished.emit(True, action, "Operação concluída com sucesso.")
         else:
             self._set_progress(0)
@@ -550,6 +624,8 @@ class TransactionService(QObject):
                 msg = f"Falha na execução (código de saída: {exit_code})."
 
             self._set_state(state_label, msg)
+            outcome = "cancelled" if state_label == "cancelled" else "failed"
+            self.set_post_verification_outcome(outcome, msg)
             self.logLineReceived.emit(f"=== [FALHA] {msg} ===")
             self.transactionFinished.emit(False, action, msg)
 
@@ -637,6 +713,7 @@ class TransactionService(QObject):
         self._set_stage("idle")
         self._clear_prompt_state()
         self._set_state("error", error_message)
+        self.set_post_verification_outcome("failed", error_message)
         self.logLineReceived.emit(f"[ERRO] {error_message}")
         self.transactionFinished.emit(False, action, error_message)
 
@@ -679,6 +756,9 @@ class TransactionService(QObject):
             action = self._current_action
             self._set_state("success", "Operação mock concluída com sucesso.")
             self.logLineReceived.emit(f"[MOCK SUCESSO] Transação '{action}' em {pkgs_repr} concluída.")
+            self.set_post_verification_outcome(
+                "complete", "Operação concluída com código 0; verificando estado dos pacotes..."
+            )
             self.transactionFinished.emit(True, action, f"Transação '{action}' concluída com sucesso.")
             self._current_action = ""
             self._current_packages = []

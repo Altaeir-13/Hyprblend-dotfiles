@@ -81,9 +81,10 @@ Item {
             case "development": return "code";
             case "games": return "sports_esports";
             case "multimedia": return "movie";
+            case "design": return "palette";
             case "internet": return "public";
             case "system": return "memory";
-            case "office": return "description";
+            case "office": return "edit_note";
             case "featured": return "auto_awesome";
             default: return "inventory_2";
         }
@@ -91,6 +92,8 @@ Item {
 
     readonly property bool hasPkg: Boolean(root.pkgData && root.pkgData.name)
     readonly property bool isAur: Boolean(root.hasPkg && (root.pkgData.source === "aur" || root.pkgData.repository === "aur"))
+    readonly property bool hasScreenshots: Boolean(root.hasPkg && root.pkgData.screenshots && root.pkgData.screenshots.length > 0)
+    readonly property bool hasOptDepends: Boolean(root.hasPkg && root.pkgData.optdepends && root.pkgData.optdepends.length > 0)
     property bool pkgbuildExpanded: false
 
     anchors.fill: parent
@@ -120,8 +123,8 @@ Item {
     Rectangle {
         id: dialogCard
         anchors.centerIn: parent
-        width: Math.min(parent.width - 48, 780)
-        height: Math.min(parent.height - 48, 700)
+        width: Math.min(parent.width - 48, 800)
+        height: Math.min(parent.height - 48, 720)
         radius: root.getToken("radiusLarge", 20)
         color: root.getToken("surfaceContainer", "#201f20")
         border.width: 1
@@ -137,9 +140,11 @@ Item {
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 20
-            spacing: 16
+            spacing: 14
 
+            // =================================================================
             // 1. Cabeçalho do Modal: Avatar + Nomes + Versões + Botão Fechar
+            // =================================================================
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 14
@@ -162,7 +167,7 @@ Item {
                         smooth: true
                         mipmap: true
                         visible: status === Image.Ready
-                        source: (root.pkgData && root.pkgData.iconName && root.pkgData.iconName.length > 0 && typeof StoreBridge !== "undefined" && StoreBridge && StoreBridge.hasDesktopIcon(root.pkgData.iconName)) ? ("image://xdgicon/" + root.pkgData.iconName) : ""
+                        source: (root.pkgData && root.pkgData.iconName && root.pkgData.iconName.length > 0 && typeof StoreBridge !== "undefined" && StoreBridge && StoreBridge.hasDesktopIcon && StoreBridge.hasDesktopIcon(root.pkgData.iconName)) ? ("image://xdgicon/" + root.pkgData.iconName) : ""
                     }
 
                     Text {
@@ -177,7 +182,7 @@ Item {
                     }
                 }
 
-                // Títulos e Repositório
+                // Títulos, Repositório e AppID
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 2
@@ -236,6 +241,17 @@ Item {
                             color: root.getToken("primary", "#d0bcff")
                             font.weight: Font.DemiBold
                         }
+
+                        // AppID AppStream (se disponível)
+                        Text {
+                            visible: Boolean(root.hasPkg && root.pkgData.appId && root.pkgData.appId.length > 0)
+                            text: "• " + (root.pkgData && root.pkgData.appId ? root.pkgData.appId : "")
+                            font.family: root.getToken("monoFontFamily", "JetBrains Mono NF")
+                            font.pixelSize: 11
+                            color: root.getToken("onSurfaceVariant", "#cbc5ca")
+                            opacity: 0.75
+                            elide: Text.ElideRight
+                        }
                     }
                 }
 
@@ -265,7 +281,89 @@ Item {
                 }
             }
 
-            // 2. Barra de Ações Primárias (Instalar, Atualizar, Remover ou Badge de Protegido)
+            // =================================================================
+            // 2. Barra de Proveniência & Popularidade Confiável
+            // =================================================================
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: Boolean(root.hasPkg && ((root.pkgData.provenanceLabel && root.pkgData.provenanceLabel.length > 0) || (root.pkgData.popularityLabel && root.pkgData.popularityLabel.length > 0)))
+
+                // Badge de Proveniência
+                Rectangle {
+                    visible: Boolean(root.hasPkg && root.pkgData.provenanceLabel && root.pkgData.provenanceLabel.length > 0)
+                    implicitWidth: provRow.implicitWidth + 14
+                    height: 24
+                    radius: root.getToken("radiusFull", 9999)
+                    color: root.getToken("surfaceContainerHighest", "#363435")
+                    border.width: 1
+                    border.color: root.getToken("outlineVariant", "#49454f")
+
+                    RowLayout {
+                        id: provRow
+                        anchors.centerIn: parent
+                        spacing: 4
+
+                        Text {
+                            text: "recommend"
+                            font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                            font.pixelSize: 13
+                            color: root.getToken("primary", "#d0bcff")
+                        }
+
+                        Text {
+                            text: root.hasPkg && root.pkgData.provenanceLabel ? root.pkgData.provenanceLabel : ""
+                            font.family: root.getToken("fontFamily", "Google Sans Flex")
+                            font.pixelSize: 11
+                            color: root.getToken("onSurface", "#e6e1e1")
+                        }
+                    }
+                }
+
+                // Badge de Métrica de Popularidade com Explicação Transparente
+                Rectangle {
+                    visible: Boolean(root.hasPkg && root.pkgData.popularityLabel && root.pkgData.popularityLabel.length > 0)
+                    implicitWidth: popRow.implicitWidth + 14
+                    height: 24
+                    radius: root.getToken("radiusFull", 9999)
+                    color: root.isAur ? root.getToken("tertiaryContainer", "#633b48") : root.getToken("secondaryContainer", "#4a4458")
+
+                    RowLayout {
+                        id: popRow
+                        anchors.centerIn: parent
+                        spacing: 4
+
+                        Text {
+                            text: root.isAur ? "thumb_up" : "analytics"
+                            font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                            font.pixelSize: 13
+                            color: root.isAur ? root.getToken("onTertiaryContainer", "#ffd8e4") : root.getToken("onSecondaryContainer", "#e8def8")
+                        }
+
+                        Text {
+                            text: {
+                                if (!root.hasPkg || !root.pkgData.popularityLabel) return "";
+                                let sourceText = "";
+                                if (root.pkgData.popularitySource === "pkgstats") {
+                                    sourceText = " (Amostra voluntária Arch Linux pkgstats)";
+                                } else if (root.pkgData.popularitySource === "aur_rpc") {
+                                    sourceText = " (Votos e Popularidade no AUR RPC)";
+                                }
+                                return root.pkgData.popularityLabel + sourceText;
+                            }
+                            font.family: root.getToken("fontFamily", "Google Sans Flex")
+                            font.pixelSize: 11
+                            color: root.isAur ? root.getToken("onTertiaryContainer", "#ffd8e4") : root.getToken("onSecondaryContainer", "#e8def8")
+                        }
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
+            }
+
+            // =================================================================
+            // 3. Barra de Ações Primárias (Instalar, Atualizar Syu, Remover)
+            // =================================================================
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 10
@@ -302,7 +400,7 @@ Item {
                     }
                 }
 
-                // Botão Instalar
+                // Botão Instalar Pacote
                 Rectangle {
                     visible: Boolean(root.hasPkg && !root.pkgData.installed)
                     implicitWidth: installBtnRow.implicitWidth + 24
@@ -345,7 +443,7 @@ Item {
                     }
                 }
 
-                // Botão Atualizar
+                // Botão Atualizar (Refletindo a política anti-partial upgrade do Arch Linux para oficiais)
                 Rectangle {
                     visible: Boolean(root.hasPkg && root.pkgData.installed && root.pkgData.updateAvailable)
                     implicitWidth: updBtnRow.implicitWidth + 24
@@ -366,7 +464,7 @@ Item {
                         }
 
                         Text {
-                            text: "Atualizar Pacote"
+                            text: !root.isAur ? "Atualizar Sistema (Syu)" : "Atualizar Pacote AUR"
                             font.family: root.getToken("fontFamily", "Google Sans Flex")
                             font.pixelSize: 12
                             font.weight: Font.Bold
@@ -388,7 +486,7 @@ Item {
                     }
                 }
 
-                // Botão Remover (se instalado e não protegido)
+                // Botão Desinstalar (se instalado e não protegido)
                 Rectangle {
                     visible: Boolean(root.hasPkg && root.pkgData.installed && !root.pkgData.isProtected)
                     implicitWidth: rmBtnRow.implicitWidth + 24
@@ -442,13 +540,15 @@ Item {
                 opacity: 0.35
             }
 
-            // 3. Conteúdo Rolável dos Detalhes
+            // =================================================================
+            // 4. Conteúdo Rolável dos Detalhes (Screenshots, Sobre, Metadados, Deps)
+            // =================================================================
             Flickable {
                 id: detailsFlickable
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 contentWidth: width
-                contentHeight: detailsColumn.implicitHeight + 20
+                contentHeight: detailsColumn.implicitHeight + 24
                 boundsBehavior: Flickable.StopAtBounds
                 clip: true
 
@@ -462,7 +562,58 @@ Item {
                     width: detailsFlickable.width - 16
                     spacing: 16
 
-                    // Banner de Segurança do AUR
+                    // 4.1. Seção de Screenshots AppStream (se existirem URLs reais)
+                    ColumnLayout {
+                        visible: root.hasScreenshots
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Text {
+                            text: "Capturas de Tela (AppStream)"
+                            font.family: root.getToken("fontFamily", "Google Sans Flex")
+                            font.pixelSize: 14
+                            font.weight: Font.DemiBold
+                            color: root.getToken("onSurface", "#e6e1e1")
+                        }
+
+                        ListView {
+                            id: screenshotList
+                            Layout.fillWidth: true
+                            implicitHeight: 200
+                            orientation: ListView.Horizontal
+                            spacing: 12
+                            clip: true
+                            boundsBehavior: Flickable.StopAtBounds
+                            model: (root.pkgData && root.pkgData.screenshots) ? root.pkgData.screenshots : []
+
+                            WheelHandler {
+                                orientation: Qt.Horizontal
+                                onWheel: (event) => {
+                                    screenshotList.contentX = Math.max(0, Math.min(screenshotList.contentWidth - screenshotList.width, screenshotList.contentX - event.angleDelta.y));
+                                }
+                            }
+
+                            delegate: Rectangle {
+                                width: 320
+                                height: 190
+                                radius: root.getToken("radiusNormal", 14)
+                                color: root.getToken("surfaceContainerLowest", "#0f0e0e")
+                                border.width: 1
+                                border.color: root.getToken("outlineVariant", "#49454f")
+                                clip: true
+
+                                Image {
+                                    anchors.fill: parent
+                                    asynchronous: true
+                                    fillMode: Image.PreserveAspectFit
+                                    source: modelData
+                                    smooth: true
+                                }
+                            }
+                        }
+                    }
+
+                    // 4.2. Banner de Segurança do AUR
                     Rectangle {
                         visible: root.isAur
                         Layout.fillWidth: true
@@ -530,7 +681,6 @@ Item {
 
                                 Item { Layout.fillWidth: true }
 
-                                // Botão Inspecionar PKGBUILD
                                 Rectangle {
                                     implicitWidth: inspectBtnRow.implicitWidth + 16
                                     height: 28
@@ -608,7 +758,7 @@ Item {
                         }
                     }
 
-                    // Descrição Completa
+                    // 4.3. Descrição Completa
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 6
@@ -633,7 +783,7 @@ Item {
                         }
                     }
 
-                    // Grade de Metadados
+                    // 4.4. Grade de Metadados
                     GridLayout {
                         Layout.fillWidth: true
                         columns: 3
@@ -684,7 +834,7 @@ Item {
                         }
                     }
 
-                    // Seção de Dependências
+                    // 4.5. Seção de Dependências Diretas
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 6
@@ -714,6 +864,47 @@ Item {
 
                                     Text {
                                         id: depLabel
+                                        anchors.centerIn: parent
+                                        text: modelData
+                                        font.family: root.getToken("monoFontFamily", "JetBrains Mono NF")
+                                        font.pixelSize: 10
+                                        color: root.getToken("onSurfaceVariant", "#cbc5ca")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 4.6. Seção de Dependências Opcionais
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        visible: root.hasOptDepends
+
+                        Text {
+                            text: "Dependências Opcionais"
+                            font.family: root.getToken("fontFamily", "Google Sans Flex")
+                            font.pixelSize: 13
+                            font.weight: Font.DemiBold
+                            color: root.getToken("onSurface", "#e6e1e1")
+                        }
+
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Repeater {
+                                model: (root.pkgData && root.pkgData.optdepends) ? root.pkgData.optdepends : []
+                                delegate: Rectangle {
+                                    implicitWidth: optDepLabel.implicitWidth + 12
+                                    height: 22
+                                    radius: root.getToken("radiusSmall", 8)
+                                    color: root.getToken("surfaceContainer", "#201f20")
+                                    border.width: 1
+                                    border.color: root.getToken("outlineVariant", "#49454f")
+
+                                    Text {
+                                        id: optDepLabel
                                         anchors.centerIn: parent
                                         text: modelData
                                         font.family: root.getToken("monoFontFamily", "JetBrains Mono NF")

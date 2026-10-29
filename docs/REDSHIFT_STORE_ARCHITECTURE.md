@@ -1,227 +1,304 @@
-# Arquitetura e Contratos Técnicos — Redshift Store
+# Arquitetura e Contratos Técnicos — Redshift Store 2.0
 
 **Orquestrador e Arquiteto Principal**: Gemini 4 Argon (High)  
-**Status**: Marco 1 — Fundação (Aprovado pelo Orquestrador)
+**Engenheiros de Execução**: Backend Transactions, Backend Catalog, Qt6/QML UI, Material You Integration, Quality & Installer  
+**Status**: Fase 3A — Validação de Qualidade e Integração Aprovada  
 
 ---
 
 ## 1. Visão Arquitetural
 
-A **Redshift Store** é a loja gráfica nativa de aplicativos do **Redshift OS**, projetada com usabilidade inspirada na Microsoft Store e identidade visual **Material 3 Expressive** 100% sincronizada com o wallpaper e com os modos **end-4 (`illogical-impulse`)** e **Caelestia Shell**.
+A **Redshift Store 2.0 (Smart Catalog & Safe Arch Linux)** é a central gráfica de gerenciamento e descoberta de software do **Redshift OS**. Projetada com usabilidade inspirada na Microsoft Store e identidade visual **Material 3 Expressive**, a aplicação integra-se nativamente com os temas do **end-4 (`illogical-impulse`)** e **Caelestia Shell**, operando sobre os repositórios oficiais do Arch Linux e o AUR com garantias rígidas de segurança, integridade e privacidade.
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph UI["Camada de Apresentação (Qt6 / QML)"]
         Main["Main.qml<br/>Janela Principal + Navigation Rail"]
-        Home["HomePage.qml<br/>Hero Banner + Destaques + Categorias"]
-        Catalog["CatalogPage.qml<br/>Busca + Filtros Oficial/AUR"]
-        Installed["InstalledPage.qml<br/>Pacotes Instalados + Remoção"]
-        Updates["UpdatesPage.qml<br/>Atualizações + Atualizar Tudo"]
-        Queue["OperationsDrawer.qml<br/>Fila + Console de Logs ao Vivo"]
-        Detail["PackageDetailModal.qml<br/>Metadados + Aviso AUR + PKGBUILD"]
-        ThemeQML["Theme.qml<br/>Tokens M3 Reativos"]
+        Home["HomePage.qml<br/>Hero Banner + 8 Seções de Descoberta"]
+        Catalog["CatalogPage.qml<br/>Busca Inteligente + Filtros + Paginação"]
+        Installed["InstalledPage.qml<br/>Pacotes Instalados + Biblioteca"]
+        Updates["UpdatesPage.qml<br/>Central de Atualizações + Anti-Partial Upgrade"]
+        Drawer["OperationsLogDrawer.qml<br/>Terminal em Tempo Real + Menus Interativos"]
+        Detail["PackageDetailDialog.qml<br/>Modal de Metadados + PKGBUILD"]
+        ThemeQML["Theme.qml<br/>49 Tokens M3 Reativos + Curvas de Animação"]
     end
 
-    subgraph Bridge["Camada de Contratos (PyQt6 QObject / Models)"]
-        Controller["StoreController (QObject)"]
+    subgraph Bridge["Camada de Contratos e Modelos (PyQt6)"]
+        Controller["StoreController (QObject Facade)"]
         ThemeSvc["ThemeService (QObject)"]
-        CatalogModel["PackageListModel (QAbstractListModel)"]
-        InstalledModel["PackageListModel (Instalados)"]
-        UpdatesModel["PackageListModel (Atualizações)"]
+        CatModel["catalogModel (PackageListModel - 34 Roles)"]
+        HomeModels["8 Modelos de Seções da Home"]
+        AurModels["6 Modelos de Descoberta AUR"]
+        InstModel["installedModel (PackageListModel)"]
+        UpdModel["updatesModel (PackageListModel)"]
     end
 
-    subgraph Backend["Camada de Serviços e Segurança (Python Assíncrono)"]
-        PacmanLocal["Leitor Nativo /var/lib/pacman/local (47ms)"]
-        PacmanSync["Indexador pacman -Sl + AppStream (gi.repository.AppStream)"]
-        AurClient["Cliente Assíncrono AUR RPC v5 (Debounce + Cache TTL)"]
-        UpdateChecker["Verificador checkupdates + yay -Qu"]
-        TxEngine["Motor de Transações Seguro (QProcess / Polkit / Lock Check)"]
+    subgraph Backend["Camada de Serviços do Sistema (Python Assíncrono)"]
+        SyncIndexer["Indexador de Sync DBs (/var/lib/pacman/sync/*.db)<br/>15.700+ Pacotes Oficiais"]
+        SyncCache["Cache Persistente JSON com Assinaturas<br/>~/.cache/redshift-store/sync_index_v2.json"]
+        AppStreamParser["Parser AppStream + Catálogo Curado<br/>KNOWN_APPLICATIONS_CATALOG"]
+        AurClient["Cliente AUR RPC v5 em Lote<br/>Cache em Disco + Debounce"]
+        PkgstatsService["Métricas de Popularidade da Comunidade<br/>pkgstats Baseline"]
+        PrivacyPrefs["Gerenciador de Preferências Privadas Locais<br/>$XDG_STATE_HOME/.../user_preferences.json"]
+        TxEngine["Motor de Transações Seguro (QProcess)<br/>Stage-Aware Cancellation + Interactive Menus"]
     end
 
-    subgraph OS["Infraestrutura Redshift OS / Arch Linux"]
-        ColorsJSON["~/.local/state/quickshell/user/generated/colors.json"]
-        SchemeJSON["~/.local/state/caelestia/scheme.json"]
-        Polkit["pkexec / Agente Polkit (Quickshell / KDE)"]
-        PacmanYay["pacman / yay (Nunca root para AUR)"]
+    subgraph OS["Infraestrutura Arch Linux / Redshift OS"]
+        PacmanDB["/var/lib/pacman/local/ + /var/lib/pacman/sync/"]
+        LockFile["/var/lib/pacman/db.lck"]
+        Polkit["pkexec / Agente Polkit Gráfico"]
+        PacmanYay["pacman / yay (Execução não-root)"]
+        ThemeFiles["colors.json / scheme.json / wallpaper.txt"]
     end
 
     UI <--> Bridge
     Bridge <--> Backend
-    ThemeSvc <-- "QFileSystemWatcher" --> ColorsJSON
-    ThemeSvc <-- "QFileSystemWatcher" --> SchemeJSON
+    SyncIndexer --> PacmanDB
+    SyncIndexer <--> SyncCache
+    SyncIndexer --> AppStreamParser
+    Backend --> PrivacyPrefs
+    ThemeSvc <-- "QFileSystemWatcher" --> ThemeFiles
+    TxEngine --> LockFile
     TxEngine --> Polkit
     TxEngine --> PacmanYay
 ```
 
 ---
 
-## 2. Estrutura de Diretórios no Repositório
+## 2. Contratos de Dados e Modelos (`PackageListModel`)
 
-Para integração limpa com o instalador `./setup` (que já gerencia `$XDG_DATA_HOME/redshift-os` e `$XDG_BIN_HOME`), os artefatos da Redshift Store seguem a seguinte organização:
+### 2.1 Schema Completo dos 34 Roles
+
+O `PackageListModel` estende `QAbstractListModel` e mapeia 34 roles de dados diretamente consumíveis pelo mecanismo QML:
+
+| # | Role QML (`Qt.UserRole + N`) | Tipo | Descrição e Origem |
+| :---: | :--- | :--- | :--- |
+| 1 | `name` | `str` | Nome exato do pacote no banco ALPM / AUR (ex.: `firefox`, `blender`). |
+| 2 | `displayName` | `str` | Nome amigável de exibição obtido via AppStream ou catálogo enriquecido. |
+| 3 | `summary` | `str` | Resumo conciso da finalidade do pacote. |
+| 4 | `description` | `str` | Descrição técnica completa do aplicativo ou pacote. |
+| 5 | `version` | `str` | Versão disponível para instalação ou atualização nos repositórios. |
+| 6 | `installedVersion` | `str` | Versão instalada localmente no sistema (`""` caso não instalado). |
+| 7 | `repository` | `str` | Repositório de origem (`core`, `extra`, `multilib`, `aur`). |
+| 8 | `source` | `str` | Origem padronizada: `"official"` ou `"aur"`. |
+| 9 | `installed` | `bool` | `True` se o pacote consta instalado em `/var/lib/pacman/local/`. |
+| 10 | `explicit` | `bool` | `True` se instalado explicitamente pelo usuário (não como dependência). |
+| 11 | `updateAvailable` | `bool` | `True` se houver versão mais recente disponível para atualização. |
+| 12 | `category` | `str` | Categoria canônica (`internet`, `development`, `games`, `multimedia`, `design`, `utilities`, `system`, `office`). |
+| 13 | `iconName` | `str` | Nome do ícone XDG, caminho de imagem ou identificador do Material Symbols. |
+| 14 | `installedSize` | `str` | Tamanho descompactado no disco após instalação (ex.: `"197.57 MiB"`). |
+| 15 | `downloadSize` | `str` | Tamanho do pacote compactado para download (ex.: `"70.37 MiB"`). |
+| 16 | `license` | `str` | Licença de distribuição do software (ex.: `GPL3`, `MIT`). |
+| 17 | `url` | `str` | URL da página oficial ou repositório upstream do projeto. |
+| 18 | `depends` | `list[str]` | Lista de dependências diretas exigidas pelo pacote. |
+| 19 | `optdepends` | `list[str]` | Lista de dependências opcionais sugeridas para funcionalidades extras. |
+| 20 | `votes` | `int` | Votos reais recebidos na comunidade do AUR (`0` para oficiais). |
+| 21 | `popularity` | `float` | Pontuação de popularidade computada pelo AUR RPC (`0.0` para oficiais). |
+| 22 | `maintainer` | `str` | Mantenedor do pacote no repositório oficial ou no AUR. |
+| 23 | `isProtected` | `bool` | `True` se for pacote protegido do sistema bloqueado contra remoção. |
+| 24 | `itemData` | `dict` | Dicionário consolidado para acesso facilitado a todos os atributos. |
+| 25 | `isApplication` | `bool` | `True` se for aplicativo gráfico interativo com entrada no desktop. |
+| 26 | `appId` | `str` | Identificador AppStream XDG (ex.: `org.kde.krita.desktop`). |
+| 27 | `screenshots` | `list[str]` | URLs de capturas de tela registradas nos metadados AppStream. |
+| 28 | `popularitySource` | `str` | Fonte da métrica: `"pkgstats"` (oficiais), `"aur_rpc"` (AUR) ou `"catalog"`. |
+| 29 | `popularityLabel` | `str` | Rótulo formatado legível (ex.: `"69.1% dos usuários Arch"`, `"1.240 votos"`). |
+| 30 | `provenance` | `str` | Canal de procedência: `"repo"`, `"aur"`, `"curated"`, `"personalized"`. |
+| 31 | `provenanceLabel` | `str` | Justificativa ou procedência legível exibida no cartão do aplicativo. |
+| 32 | `isFavorite` | `bool` | `True` se o usuário marcou o pacote como favorito local. |
+| 33 | `buildDate` | `int` | Timestamp Unix da data de compilação do pacote. |
+| 34 | `groups` | `list[str]` | Grupos de pacotes do pacman aos quais o software pertence. |
+
+### 2.2 Métodos do `PackageListModel`
+- `rowCount() -> int` / `count -> int`: Retorna o total de elementos no modelo.
+- `set_items(items: Sequence[PackageItem]) -> None`: Substituição atômica de todos os itens com emissão de `beginResetModel`/`endResetModel`.
+- `append_items(items: Sequence[PackageItem]) -> None`: Inserção incremental eficiente com prevenção automática de duplicatas por índice de nomes (`_name_index`).
+- `get_by_name(name: str) -> PackageItem | None`: Consulta por nome com complexidade $O(1)$.
+- `get_dict_by_name(name: str) -> dict[str, Any]`: Consulta retornando dicionário serializado para consumo QML.
+- `get_at(row: int) -> PackageItem | None`: Acesso posicional por índice.
+- `clear() -> None`: Limpeza total do modelo.
+
+---
+
+## 3. Contrato da Fachada `StoreController` (`StoreBridge`)
+
+A classe `StoreController` atua como a fachada central exposta ao contexto raiz do QML sob a propriedade `StoreBridge`.
+
+### 3.1 Modelos Expostos
 
 ```text
-dots/
-├── .local/
-│   ├── bin/
-│   │   └── redshift-store                                # Launcher CLI / Desktop executável
-│   └── share/
-│       ├── applications/
-│       │   └── redshift-store.desktop                    # Entrada XDG Desktop (Redshift Store)
-│       └── redshift-os/
-│           └── redshift-store/
-│               ├── main.py                               # Ponto de entrada PyQt6 + QQmlApplicationEngine
-│               ├── backend/
-│               │   ├── __init__.py
-│               │   ├── models.py                         # Dataclass PackageItem + QAbstractListModel
-│               │   ├── security.py                       # Validação de nomes, lock check, pacotes protegidos
-│               │   ├── catalog_service.py                # Indexação pacman, AppStream e AUR RPC v5
-│               │   ├── transaction_service.py            # Execução assíncrona (QProcess), fila e logs
-│               │   ├── theme_service.py                  # Monitoramento Matugen (colors.json / scheme.json)
-│               │   └── store_controller.py               # Facade QObject exposta ao QML
-│               └── qml/
-│                   ├── Main.qml                          # Janela principal e roteamento de páginas
-│                   ├── theme/
-│                   │   └── Theme.qml                     # Tokens Material 3 Expressive + curvas de animação
-│                   ├── components/
-│                   │   ├── NavigationSidebar.qml         # Barra lateral estilo Microsoft Store / M3 Rail
-│                   │   ├── TopSearchBar.qml              # Busca com debounce, filtros e status de lock
-│                   │   ├── PackageCard.qml               # Card responsivo de aplicativo
-│                   │   ├── HeroBanner.qml                # Banner em destaque da página inicial
-│                   │   ├── CategoryChipBar.qml           # Barra de filtros de categorias e origem
-│                   │   ├── PackageDetailDialog.qml       # Modal de detalhes, dependências e PKGBUILD AUR
-│                   │   └── OperationsLogDrawer.qml       # Painel de progresso e console de logs em tempo real
-│                   └── pages/
-│                       ├── HomePage.qml                  # Destaques, recomendados e categorias
-│                       ├── CatalogPage.qml               # Resultados de busca e exploração
-│                       ├── InstalledPage.qml             # Biblioteca de pacotes instalados
-│                       └── UpdatesPage.qml               # Central de atualizações pendentes
-sdata/
-└── dist-arch/
-    └── illogical-impulse-redshift-store/
-        └── PKGBUILD                                      # Metapacote de dependências da Redshift Store
-tests/
-└── test_redshift_store.py                                # Suíte automatizada (unitários, contratos, segurança e UI headless)
+StoreController
+├── catalogModel                # Modelo da grade de busca e catálogo geral (paginado)
+├── featuredModel               # Banner principal de destaques curados da Home
+├── installedModel              # Biblioteca de aplicativos e pacotes instalados
+├── updatesModel                # Central de atualizações pendentes (oficiais e AUR)
+│
+├── Seções da Página Início (Home):
+│   ├── recommendedModel        # Recomendações personalizadas locais transparentes
+│   ├── popularCommunityModel   # Populares da comunidade Arch (pkgstats)
+│   ├── gettingStartedModel     # Primeiros passos essenciais no Redshift OS
+│   ├── developmentSectionModel # Ambiente de desenvolvimento e ferramentas
+│   ├── gamesSectionModel       # Jogos nativos, emuladores e launchers
+│   ├── designSectionModel      # Design gráfico, 3D e edição multimídia
+│   └── communicationSectionModel # Mensageiros, navegadores e comunicação
+│
+└── Seções de Descoberta do AUR:
+    ├── aurPopularModel         # Mais votados da comunidade AUR
+    ├── aurCommunityModel       # Destaques comunitários gerais
+    ├── aurDevModel             # Ferramentas de desenvolvimento no AUR
+    ├── aurGamesModel           # Jogos e utilitários de jogos no AUR
+    ├── aurProductivityModel    # Aplicativos de escritório e produtividade no AUR
+    └── aurCuratedModel         # Curadoria de pacotes estáveis recomendados do AUR
+```
+
+### 3.2 Propriedades Reativas (`pyqtProperty`)
+
+| Propriedade | Tipo | Sinal de Notificação | Descrição |
+| :--- | :--- | :--- | :--- |
+| `officialSyncCount` | `int` | `catalogChanged` | Total de pacotes indexados dos repositórios oficiais (`> 15.000`). |
+| `personalizationEnabled` | `bool` | `personalizationChanged` | Estado de ativação das recomendações personalizadas locais. |
+| `hasPersonalizationHistory` | `bool` | `personalizationChanged` | Indica se há histórico ou favoritos locais registrados no disco. |
+| `favoritesCount` | `int` | `personalizationChanged` | Quantidade total de pacotes favoritados pelo usuário. |
+| `lastUpdateOutcome` | `str` | `updatesChanged` | Resultado pós-verificado: `""`, `"complete"`, `"partial"`, `"cancelled"`, `"failed"`. |
+| `lastUpdateSummary` | `str` | `updatesChanged` | Resumo detalhado do desfecho da última operação de atualização. |
+| `canLoadMoreCatalog` | `bool` | `catalogChanged` | `True` se houver páginas adicionais a serem carregadas na busca. |
+| `catalogStatus` | `str` | `catalogChanged` | Estado da pesquisa: `"ready"`, `"loading"`, `"no_results"`, `"network_error"`. |
+| `catalogStatusMessage` | `str` | `catalogChanged` | Mensagem descritiva associada ao status do catálogo. |
+| `catalogTotalCount` | `int` | `catalogChanged` | Contagem total de correspondências encontradas no universo filtrado. |
+| `activeCategory` | `str` | `filterChanged` | Categoria canônica ativa na filtragem. |
+| `activeSourceFilter` | `str` | `filterChanged` | Filtro de origem ativo: `"all"`, `"official"`, `"aur"`. |
+| `activeInstalledFilter` | `str` | `filterChanged` | Filtro de instalação: `"all"`, `"installed"`, `"not_installed"`. |
+| `activeSortBy` | `str` | `filterChanged` | Critério de ordenação: `"relevance"`, `"popularity"`, `"name"`, `"recent"`. |
+| `includeSystemPackages` | `bool` | `filterChanged` | Alterna inclusão de bibliotecas e pacotes de baixo nível. |
+| `isIndexingCatalog` | `bool` | `catalogChanged` | `True` enquanto a indexação em segundo plano estiver em execução. |
+| `selectedPackage` | `QVariantMap` | `selectedPackageChanged` | Dados consolidados do pacote selecionado para visualização em detalhes. |
+| `pkgbuildPreview` | `str` | `pkgbuildPreviewChanged` | Conteúdo do PKGBUILD obtido para inspeção de pacotes AUR. |
+| `operationState` | `str` | `operationStateChanged` | Estado da operação: `"idle"`, `"installing"`, `"removing"`, `"updating"`, etc. |
+| `transactionStage` | `str` | `operationStateChanged` | Estágio atual da transação: `"downloading"`, `"compiling"`, `"committing"`. |
+| `canCancel` | `bool` | `operationStateChanged` | `True` se o cancelamento for seguro no estágio em execução. |
+| `waitingForInput` | `bool` | `promptChanged` | `True` se o gerenciador de pacotes estiver aguardando resposta interativa. |
+| `currentPromptText` | `str` | `promptChanged` | Texto do prompt interativo capturado do terminal. |
+| `isBusy` | `bool` | `operationStateChanged` | `True` se houver transação em execução. |
+| `isDbLocked` | `bool` | `lockStatusChanged` | `True` se `/var/lib/pacman/db.lck` estiver presente no sistema. |
+| `installedCount` | `int` | `installedChanged` | Total de pacotes instalados no sistema. |
+| `updatesCount` | `int` | `updatesChanged` | Total de atualizações pendentes disponíveis. |
+| `logText` | `str` | `logsChanged` | Buffer consolidado de logs transmitidos pelo terminal. |
+
+### 3.3 Slots Públicos (`@pyqtSlot`)
+
+```python
+# Busca, Filtros e Paginação
+search(query: str, source_filter: str = "all", category_filter: str = "all") -> None
+setCategory(category: str) -> None
+setSourceFilter(source_filter: str) -> None
+setInstalledFilter(installed_filter: str) -> None
+setSortBy(sort_by: str) -> None
+setIncludeSystemPackages(include_sys: bool) -> None
+loadMoreCatalog() -> None
+exploreSection(section_id: str) -> None
+
+# Detalhes, Favoritos e Personalização
+selectPackage(pkg_name: str, repository: str = "") -> None
+toggleFavorite(pkg_name: str) -> None
+setPersonalizationEnabled(enabled: bool) -> None
+clearPersonalizationHistory() -> None
+fetchPkgbuildPreview(pkg_name: str) -> None
+hasDesktopIcon(icon_name: str) -> bool
+
+# Atualizações e Transações
+refreshCatalog() -> None
+refreshHomeSections() -> None
+refreshAurDiscovery() -> None
+refreshInstalled(explicit_only: bool = False) -> None
+checkUpdates() -> None
+installPackage(pkg_name: str, repository: str = "official") -> None
+removePackage(pkg_name: str) -> None
+updatePackage(pkg_name: str, repository: str = "official") -> None
+updateAll() -> None
+cancelCurrentOperation() -> None
+respondToPrompt(accept: bool) -> bool
+sendTransactionInput(text: str) -> bool
+sendInput(text: str) -> bool
+clearLogs() -> None
 ```
 
 ---
 
-## 3. Contratos de Dados e Interfaces (`QObject` ↔ `QML`)
+## 4. Arquitetura de Indexação Assíncrona
 
-### 3.1. Contrato de Pacote (`PackageItem` & `PackageListModel`)
+A indexação de pacotes opera com máxima eficiência em duas camadas:
 
-Todo item de pacote manipulado pelo backend e exposto pelos modelos `QAbstractListModel` deve respeitar o schema abaixo:
+```mermaid
+sequenceDiagram
+    participant App as StoreController
+    participant Cat as CatalogService
+    participant Cache as sync_index_v2.json
+    participant FS as /var/lib/pacman/sync/*.db
+    participant Worker as Thread de Indexação
 
-| Campo Python | Role QML (`Qt.UserRole + N`) | Tipo | Descrição |
-| :--- | :--- | :--- | :--- |
-| `name` | `name` | `str` | Nome exato do pacote (`pkgname`, ex.: `firefox`). |
-| `display_name` | `displayName` | `str` | Nome amigável (AppStream ou `pkgname` humanizado). |
-| `summary` | `summary` | `str` | Resumo curto do pacote. |
-| `description` | `description` | `str` | Descrição detalhada (AppStream ou metadados expandidos). |
-| `version` | `version` | `str` | Versão disponível no repositório/AUR. |
-| `installed_version` | `installedVersion` | `str` | Versão instalada localmente (`""` se não instalado). |
-| `repository` | `repository` | `str` | Repositório de origem (`core`, `extra`, `multilib`, `aur`, `local`). |
-| `source` | `source` | `str` | `"official"` ou `"aur"`. |
-| `installed` | `installed` | `bool` | `True` se instalado no sistema. |
-| `explicit` | `explicit` | `bool` | `True` se instalado explicitamente pelo usuário. |
-| `update_available` | `updateAvailable` | `bool` | `True` se houver atualização pendente. |
-| `category` | `category` | `str` | Categoria canônica (`featured`, `development`, `games`, `multimedia`, `internet`, `utilities`, `system`, `office`). |
-| `icon_name` | `iconName` | `str` | Nome do ícone XDG/AppStream ou glyph Material Symbols. |
-| `installed_size` | `installedSize` | `str` | Tamanho instalado formatado (ex.: `"245.8 MiB"`). |
-| `download_size` | `downloadSize` | `str` | Tamanho de download formatado. |
-| `license` | `license` | `str` | Licenças do pacote. |
-| `url` | `url` | `str` | URL upstream do projeto. |
-| `depends` | `depends` | `list[str]` | Lista de dependências diretas. |
-| `optdepends` | `optdepends` | `list[str]` | Lista de dependências opcionais. |
-| `votes` | `votes` | `int` | Número de votos no AUR (`0` para pacotes oficiais). |
-| `popularity` | `popularity` | `float` | Popularidade no AUR (`0.0` para pacotes oficiais). |
-| `maintainer` | `maintainer` | `str` | Mantenedor ou empacotador. |
-| `is_protected` | `isProtected` | `bool` | `True` se for pacote crítico do sistema bloqueado contra remoção. |
-
-### 3.2. Contrato do `StoreController` (Context Property `StoreBridge`)
-
-Registrado no contexto QML como `StoreBridge`:
-
-#### Propriedades (`pyqtProperty`)
-- `catalogModel` (`QObject`, constante): instância de `PackageListModel` para resultados de busca/exploração.
-- `featuredModel` (`QObject`, constante): instância de `PackageListModel` para destaques da Home.
-- `installedModel` (`QObject`, constante): instância de `PackageListModel` para pacotes instalados.
-- `updatesModel` (`QObject`, constante): instância de `PackageListModel` para atualizações pendentes.
-- `selectedPackage` (`QVariantMap`, notify=`selectedPackageChanged`): dicionário completo do pacote selecionado para a view de detalhes.
-- `operationState` (`str`, notify=`operationStateChanged`): `"idle"` | `"searching"` | `"checking_updates"` | `"authenticating"` | `"installing"` | `"removing"` | `"updating"` | `"success"` | `"error"` | `"cancelled"`.
-- `operationStatusText` (`str`, notify=`operationStateChanged`): mensagem legível da operação atual.
-- `operationProgress` (`int`, notify=`operationProgressChanged`): `0` a `100` (`-1` para indeterminado).
-- `isBusy` (`bool`, notify=`operationStateChanged`): `True` quando uma transação de pacote está ativa.
-- `isDbLocked` (`bool`, notify=`lockStatusChanged`): `True` se `/var/lib/pacman/db.lck` existir.
-- `installedCount` (`int`, notify=`installedChanged`): total de pacotes instalados.
-- `updatesCount` (`int`, notify=`updatesChanged`): total de atualizações pendentes.
-- `logText` (`str`, notify=`logsChanged`): buffer consolidado de logs da operação atual.
-- `activeCategory` (`str`, notify=`filterChanged`): filtro de categoria atual.
-- `activeSourceFilter` (`str`, notify=`filterChanged`): `"all"` | `"official"` | `"aur"`.
-- `searchQuery` (`str`, notify=`filterChanged`): termo de busca atual.
-- `pkgbuildPreview` (`str`, notify=`pkgbuildPreviewChanged`): conteúdo do `PKGBUILD` obtido de forma somente-leitura para revisão de pacotes AUR.
-
-#### Slots (`@pyqtSlot`)
-- `search(query: str, source_filter: str, category_filter: str) -> None`
-- `setCategory(category: str) -> None`
-- `setSourceFilter(source_filter: str) -> None`
-- `selectPackage(pkg_name: str, repository: str) -> None`
-- `refreshCatalog() -> None`
-- `refreshInstalled(explicit_only: bool) -> None`
-- `checkUpdates() -> None`
-- `installPackage(pkg_name: str, repository: str) -> None`
-- `removePackage(pkg_name: str) -> None`
-- `updatePackage(pkg_name: str, repository: str) -> None`
-- `updateAll() -> None`
-- `cancelCurrentOperation() -> None`
-- `clearLogs() -> None`
-- `fetchPkgbuildPreview(pkg_name: str) -> None`
-
-#### Sinais (`pyqtSignal`)
-- `catalogChanged()`
-- `installedChanged()`
-- `updatesChanged()`
-- `selectedPackageChanged()`
-- `operationStateChanged()`
-- `operationProgressChanged()`
-- `logsChanged()`
-- `logLineReceived(str)`
-- `lockStatusChanged()`
-- `filterChanged()`
-- `pkgbuildPreviewChanged()`
-- `toastMessage(str, str)` — `(level: "info"|"success"|"warning"|"error", message: str)`
-
-### 3.3. Contrato do `ThemeService` (Context Property `ThemeBridge`)
-
-Registrado no contexto QML como `ThemeBridge`:
-
-#### Propriedades (`pyqtProperty`)
-- `colors` (`QVariantMap`, notify=`themeChanged`): dicionário contendo os 49 tokens M3 de `~/.local/state/quickshell/user/generated/colors.json` (tanto em `snake_case` quanto em `camelCase`) + tokens semânticos estendidos (`success`, `on_success`, `success_container`, `on_success_container`, `warning`, `on_warning`).
-- `isDark` (`bool`, notify=`themeChanged`): `True` para tema escuro, `False` para tema claro.
-- `schemeVariant` (`str`, notify=`themeChanged`): variante ativa do Matugen (ex.: `scheme-tonal-spot`, `scheme-fidelity`).
-- `wallpaperPath` (`str`, notify=`themeChanged`): caminho do wallpaper atual.
-- `frontendMode` (`str`, notify=`themeChanged`): `"end4"` ou `"caelestia"` (lido de `~/.local/state/quickshell/ui-switch/current`).
-
-#### Slots (`@pyqtSlot`)
-- `reloadTheme() -> None`
-- `toggleColorScheme() -> None` (aciona `switchwall.sh --noswitch --mode dark|light` de forma segura se solicitado pelo usuário, ou alterna preview local em sandbox).
+    App->>Cat: init()
+    Cat->>Cache: Ler cabeçalho de assinaturas (mtime, size)
+    Cat->>FS: Inspecionar assinaturas atuais dos arquivos .db
+    alt Assinaturas Idênticas
+        Cat->>Cache: Carregar 15.700+ pacotes diretamente (~50ms)
+        Cat-->>App: officialSyncCount > 15.000 (Imediato)
+    else Assinaturas Divergentes ou Cache Ausente
+        Cat->>Cat: Carregar KNOWN_APPLICATIONS_CATALOG para resposta inicial
+        Cat->>Worker: Disparar ensure_sync_index_loaded()
+        Worker->>FS: Ler e descompactar arquivos desc de cada banco .db
+        Worker->>Worker: Mesclar com AppStream e dados do pkgstats
+        Worker->>Cache: Salvar novo sync_index_v2.json com assinaturas
+        Worker-->>App: Emitir _indexReady -> refreshCatalog()
+    end
+```
 
 ---
 
-## 4. Arquitetura de Segurança (Revisão Obrigatória do Argon)
+## 5. Fluxo de Transações e Pós-Verificação Real
 
-1. **Sanitização Estrita de Entrada (`backend/security.py`)**:
-   - Todo `pkg_name` recebido da UI passa por validação estrita:
-     - Regex obrigatória: `^[a-zA-Z0-9][a-zA-Z0-9@._+-]{0,127}$` (proíbe iniciar com `-` para impedir injeção de flags em `pacman`/`yay`, e proíbe metacaracteres de shell).
-   - Toda invocação de processo externo utiliza `QProcess` / `subprocess` com lista explícita de argumentos (`argv` array, `shell=False` sempre) e separador `--` antes de nomes de pacotes.
-2. **Proteção de Pacotes Críticos (`PROTECTED_PACKAGES`)**:
-   - Pacotes essenciais (`base`, `linux`, `linux-lts`, `linux-zen`, `systemd`, `glibc`, `pacman`, `yay`, `sudo`, `polkit`, `hyprland`, `quickshell`, `illogical-impulse-quickshell-git`, `python`, `python-pyqt6`, `qt6-base`, `qt6-declarative`) possuem `is_protected = True` e são bloqueados no backend contra `removePackage`.
-3. **Integridade do Banco do Pacman (`db.lck`)**:
-   - Antes de qualquer operação de instalação, atualização ou remoção, `security.is_pacman_locked()` verifica `/var/lib/pacman/db.lck`. Se existir, a transação é recusada com aviso claro ao usuário (jamais removendo `db.lck` automaticamente sem confirmação explícita).
-4. **Modelo de Privilégios (`pkexec` vs `yay`)**:
-   - **Nunca executar `yay` ou `makepkg` como `root`**. Se `os.geteuid() == 0`, o executor de AUR aborta imediatamente com erro de segurança.
-   - **Operações Oficiais (`pacman`)**: Executadas via `/usr/bin/pkexec /usr/bin/pacman ... -- <pkg>`, delegando a autenticação ao agente Polkit gráfico da sessão Hyprland (`Quickshell.Services.Polkit` ou `polkit-kde-agent`). Nenhuma senha é lida, solicitada pela loja ou armazenada em memória/disco.
-   - **Operações do AUR (`yay`)**: Como `makepkg` proíbe execução como `root` e pode requerer confirmação de `PKGBUILD`/credenciais `sudo` em TTY ou via `pkexec`, o backend:
-     - Permite visualizar o `PKGBUILD` diretamente na interface antes de instalar (`fetchPkgbuildPreview`).
-     - Executa `yay -S --needed --sudo /usr/bin/pkexec -- <pkg>` (quando não interativo/suportado) ou abre uma sessão controlada visível com logs transmitidos em tempo real, nunca suprimindo verificações de integridade PGP/sha256.
-5. **Isolamento de Testes (`REDSHIFT_STORE_SANDBOX=1` / `REDSHIFT_STORE_MOCK=1`)**:
-   - Quando a variável de ambiente `REDSHIFT_STORE_MOCK=1` está ativa (ou em testes automatizados), `TransactionService` e `CatalogService` operam sobre fixtures e simuladores em memória/diretório temporário, garantindo risco zero de alterações reais no sistema hospedeiro durante testes.
+O fluxo de atualização foi especialmente arquitetado para mitigar os riscos de inconsistência binária (*partial upgrades*) característicos do Arch Linux:
+
+```mermaid
+sequenceDiagram
+    participant User as Usuário / QML
+    participant Ctrl as StoreController
+    participant Tx as TransactionService
+    participant Yay as yay / pacman (pkexec)
+    participant Cat as CatalogService
+
+    alt Usuário aciona atualizar pacote oficial individual
+        User->>Ctrl: updatePackage("firefox", "extra")
+        Ctrl->>User: Toast Informativo (Anti-Partial Upgrade: Redirecionando para atualização completa)
+        Ctrl->>Ctrl: updateAll()
+    else Usuário aciona Atualizar Tudo
+        User->>Ctrl: updateAll()
+    end
+
+    Ctrl->>Tx: update_all()
+    Tx->>Yay: Executar /usr/bin/yay -Syu --sudo /usr/bin/pkexec
+    Note over Tx,Yay: Preserva menus --cleanmenu e --diffmenu com GIT_PAGER=cat
+    Yay-->>Tx: Streaming de logs em tempo real
+    Tx-->>Ctrl: operationProgressChanged / logLineReceived
+
+    alt Conclusão da Transação
+        Yay-->>Tx: Processo finaliza (Código de saída)
+        Tx-->>Ctrl: transactionFinished(success, action, message)
+        Ctrl->>Cat: check_updates() (Re-escaneamento real pós-transação)
+        Cat-->>Ctrl: remaining_updates
+        alt Restam 0 atualizações
+            Ctrl->>Ctrl: lastUpdateOutcome = "complete"
+            Ctrl->>User: Toast Sucesso: "Sistema atualizado com sucesso"
+        else Restam atualizações pendentes
+            Ctrl->>Ctrl: lastUpdateOutcome = "partial"
+            Ctrl->>User: Toast Aviso: "Atualização parcial: restam N pacotes pendentes"
+        end
+        Ctrl->>Ctrl: refreshInstalled() e refreshCatalog()
+    end
+```
+
+---
+
+## 6. Governança de Privacidade e Segurança
+
+1. **Privacidade Absoluta**: Nenhuma informação de telemetria, pesquisa, visualização de pacote ou categorias visitadas é enviada para qualquer servidor externo. O arquivo de preferências reside unicamente no disco local em `$XDG_STATE_HOME/redshift-store/user_preferences.json`.
+2. **Proteção do Sistema**: Pacotes essenciais (`PROTECTED_PACKAGES`) são terminantemente bloqueados contra remoção. Nomes de pacotes são rigorosamente validados contra injeção de parâmetros antes de qualquer montagem de comando.
+3. **Execução Segura do AUR**: Comandos comunitários jamais são executados sob root (`EUID != 0`). A elevação de privilégios para instalação final de binários compilados é delegada exclusivamente ao Polkit (`/usr/bin/pkexec`).

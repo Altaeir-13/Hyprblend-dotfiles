@@ -411,7 +411,7 @@ def build_safe_yay_install_cmd(pkg_names: Sequence[str], euid: int | None = None
 
 
 def build_safe_yay_sysupgrade_cmd(euid: int | None = None) -> list[str]:
-    """Build safe command argv list for full system upgrade of AUR packages via yay.
+    """Build safe command argv list for full system upgrade (official + AUR) via yay.
 
     Delegates final elevation to pkexec without interactive TTY sudo dependency.
 
@@ -426,7 +426,7 @@ def build_safe_yay_sysupgrade_cmd(euid: int | None = None) -> list[str]:
     pkexec_bin = get_safe_bin("REDSHIFT_PKEXEC_BIN", "/usr/bin/pkexec")
     return [
         yay_bin,
-        "-Sua",
+        "-Syu",
         "--sudo",
         pkexec_bin,
         "--cleanmenu",

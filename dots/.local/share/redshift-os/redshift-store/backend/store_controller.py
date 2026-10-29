@@ -1,7 +1,8 @@
 """StoreController QObject facade exposing StoreBridge to QML.
 
-Complies 100% with REDSHIFT_STORE_ARCHITECTURE.md Section 3.2 schema.
-Bridges reactive PackageListModel instances, catalog discovery, async
+Complies 100% with REDSHIFT_STORE_ARCHITECTURE.md Section 3.2 schema and TASK-B2.
+Bridges reactive PackageListModel instances, rich catalog discovery, Home sections,
+AUR discovery models, pagination, privacy-respecting personalization, async
 transaction execution, log streaming, and system pacman state.
 """
 
@@ -26,6 +27,7 @@ _GENERIC_ICON_TOKENS = frozenset({
     "applications-other",
     "applications-utilities",
     "applications-multimedia",
+    "applications-graphics",
     "applications-internet",
     "applications-development",
     "applications-games",
@@ -50,6 +52,8 @@ _COMMON_ICON_ALIASES: dict[str, tuple[str, ...]] = {
     "gimp": ("gimp", "org.gimp.GIMP"),
     "inkscape": ("org.inkscape.Inkscape", "inkscape"),
     "libreoffice-fresh": ("libreoffice-main", "libreoffice-startcenter"),
+    "krita": ("org.kde.krita",),
+    "blender": ("blender",),
 }
 
 _ICON_SEARCH_DIRS = (
@@ -66,7 +70,7 @@ class StoreController(QObject):
     """Facade QObject registered in QML context as 'StoreBridge'."""
 
     # -------------------------------------------------------------------------
-    # Signals (Section 3.2)
+    # Signals (Section 3.2 & TASK-B2)
     # -------------------------------------------------------------------------
     catalogChanged = pyqtSignal()
     installedChanged = pyqtSignal()
@@ -80,10 +84,12 @@ class StoreController(QObject):
     filterChanged = pyqtSignal()
     pkgbuildPreviewChanged = pyqtSignal()
     promptChanged = pyqtSignal()
+    personalizationChanged = pyqtSignal()
     toastMessage = pyqtSignal(str, str)  # (level: "info"|"success"|"warning"|"error", message: str)
     maintenanceStatusChanged = pyqtSignal()
     isRepairingChanged = pyqtSignal()
     _updatesLoaded = pyqtSignal(list)
+    _indexReady = pyqtSignal()
 
     def __init__(
         self,
@@ -95,27 +101,66 @@ class StoreController(QObject):
     ) -> None:
         super().__init__(parent)
 
-        self._catalog_service = catalog_service or CatalogService(mock_mode=mock_mode)
+        # Service instances
+        self._catalog_service = catalog_service or CatalogService(
+            mock_mode=mock_mode,
+            on_index_ready=lambda: self._indexReady.emit(),
+        )
         self._tx_service = transaction_service or TransactionService(parent=self, mock_mode=mock_mode)
         self._maintenance_service = maintenance_service or MaintenanceService(parent=self, mock_mode=mock_mode)
 
-        # Reactive List Models for QML views
+        # Core Reactive List Models for QML
         self._catalog_model = PackageListModel(self)
         self._featured_model = PackageListModel(self)
         self._installed_model = PackageListModel(self)
         self._updates_model = PackageListModel(self)
 
-        # Internal State
+        # Home Page Section Models (TASK-B2)
+        self._recommended_model = PackageListModel(self)
+        self._popular_community_model = PackageListModel(self)
+        self._getting_started_model = PackageListModel(self)
+        self._development_section_model = PackageListModel(self)
+        self._games_section_model = PackageListModel(self)
+        self._design_section_model = PackageListModel(self)
+        self._communication_section_model = PackageListModel(self)
+
+        # AUR Discovery Models (TASK-B2)
+        self._aur_popular_model = PackageListModel(self)
+        self._aur_community_model = PackageListModel(self)
+        self._aur_dev_model = PackageListModel(self)
+        self._aur_games_model = PackageListModel(self)
+        self._aur_productivity_model = PackageListModel(self)
+        self._aur_curated_model = PackageListModel(self)
+
+        # Internal State & Filters
         self._selected_package: dict[str, Any] = PackageItem().to_dict()
         self._search_query: str = ""
         self._active_category: str = "all"
         self._active_source_filter: str = "all"
+        self._active_installed_filter: str = "all"  # "all" | "installed" | "not_installed"
+        self._active_sort_by: str = "relevance"  # "relevance" | "popularity" | "name" | "recent"
+        self._include_system_packages: bool = False
+
+        # Pagination & Catalog Status
+        self._catalog_offset: int = 0
+        self._catalog_page_size: int = 40
+        self._catalog_total_count: int = 0
+        self._can_load_more_catalog: bool = False
+        self._catalog_status: str = "ready"
+        self._catalog_status_message: str = ""
+
+        # Update Outcomes
+        self._last_update_outcome: str = ""  # "" | "complete" | "partial" | "cancelled" | "failed"
+        self._last_update_summary: str = ""
+        self._pre_tx_updates_count: int = 0
+
         self._log_text: str = ""
         self._pkgbuild_preview: str = ""
         self._checking_updates: bool = False
 
         # Connect internal update signals
         self._updatesLoaded.connect(self._on_updates_loaded)
+        self._indexReady.connect(self._on_index_ready)
 
         # Connect TransactionService signals
         self._tx_service.stateChanged.connect(self._on_tx_state_changed)
@@ -136,14 +181,14 @@ class StoreController(QObject):
         self._init_data()
 
     def _init_data(self) -> None:
-        """Populate initial models with featured, installed packages, and health diagnostic."""
+        """Populate initial models with featured, discovery, home sections, installed packages, and health diagnostic."""
         self.refreshCatalog()
         self.refreshInstalled()
         self.checkUpdates()
         self.runDoctorCheck()
 
     # -------------------------------------------------------------------------
-    # Properties (Section 3.2)
+    # Core Models Properties
     # -------------------------------------------------------------------------
 
     @pyqtProperty(QObject, constant=True)
@@ -165,6 +210,66 @@ class StoreController(QObject):
     def updatesModel(self) -> PackageListModel:
         """Model for pending updates."""
         return self._updates_model
+
+    # -------------------------------------------------------------------------
+    # Home Page & Discovery Models Properties (TASK-B2)
+    # -------------------------------------------------------------------------
+
+    @pyqtProperty(QObject, constant=True)
+    def recommendedModel(self) -> PackageListModel:
+        return self._recommended_model
+
+    @pyqtProperty(QObject, constant=True)
+    def popularCommunityModel(self) -> PackageListModel:
+        return self._popular_community_model
+
+    @pyqtProperty(QObject, constant=True)
+    def gettingStartedModel(self) -> PackageListModel:
+        return self._getting_started_model
+
+    @pyqtProperty(QObject, constant=True)
+    def developmentSectionModel(self) -> PackageListModel:
+        return self._development_section_model
+
+    @pyqtProperty(QObject, constant=True)
+    def gamesSectionModel(self) -> PackageListModel:
+        return self._games_section_model
+
+    @pyqtProperty(QObject, constant=True)
+    def designSectionModel(self) -> PackageListModel:
+        return self._design_section_model
+
+    @pyqtProperty(QObject, constant=True)
+    def communicationSectionModel(self) -> PackageListModel:
+        return self._communication_section_model
+
+    @pyqtProperty(QObject, constant=True)
+    def aurPopularModel(self) -> PackageListModel:
+        return self._aur_popular_model
+
+    @pyqtProperty(QObject, constant=True)
+    def aurCommunityModel(self) -> PackageListModel:
+        return self._aur_community_model
+
+    @pyqtProperty(QObject, constant=True)
+    def aurDevModel(self) -> PackageListModel:
+        return self._aur_dev_model
+
+    @pyqtProperty(QObject, constant=True)
+    def aurGamesModel(self) -> PackageListModel:
+        return self._aur_games_model
+
+    @pyqtProperty(QObject, constant=True)
+    def aurProductivityModel(self) -> PackageListModel:
+        return self._aur_productivity_model
+
+    @pyqtProperty(QObject, constant=True)
+    def aurCuratedModel(self) -> PackageListModel:
+        return self._aur_curated_model
+
+    # -------------------------------------------------------------------------
+    # Reactive State Properties
+    # -------------------------------------------------------------------------
 
     @pyqtProperty("QVariantMap", notify=selectedPackageChanged)
     def selectedPackage(self) -> dict[str, Any]:
@@ -222,6 +327,21 @@ class StoreController(QObject):
         return self._active_source_filter
 
     @pyqtProperty(str, notify=filterChanged)
+    def activeInstalledFilter(self) -> str:
+        """Currently active installed filter ('all'|'installed'|'not_installed')."""
+        return self._active_installed_filter
+
+    @pyqtProperty(str, notify=filterChanged)
+    def activeSortBy(self) -> str:
+        """Currently active sorting method ('relevance'|'popularity'|'name'|'recent')."""
+        return self._active_sort_by
+
+    @pyqtProperty(bool, notify=filterChanged)
+    def includeSystemPackages(self) -> bool:
+        """True if system libraries/dependencies should be shown alongside applications."""
+        return self._include_system_packages
+
+    @pyqtProperty(str, notify=filterChanged)
     def searchQuery(self) -> str:
         """Current search query string."""
         return self._search_query
@@ -251,6 +371,61 @@ class StoreController(QObject):
         """Interactive prompt question text from pacman/yay."""
         return self._tx_service.current_prompt_text
 
+    @pyqtProperty(int, notify=catalogChanged)
+    def catalogTotalCount(self) -> int:
+        """Total matching packages count in current search/filter."""
+        return self._catalog_total_count
+
+    @pyqtProperty(bool, notify=catalogChanged)
+    def canLoadMoreCatalog(self) -> bool:
+        """True if additional pages are available to load."""
+        return self._can_load_more_catalog
+
+    @pyqtProperty(str, notify=catalogChanged)
+    def catalogStatus(self) -> str:
+        """Catalog state: 'ready'|'loading'|'no_results'|'network_error'|'source_unavailable'|'unsynced_repos'|'empty_category'."""
+        return self._catalog_status
+
+    @pyqtProperty(str, notify=catalogChanged)
+    def catalogStatusMessage(self) -> str:
+        """Human-readable catalog status message."""
+        return self._catalog_status_message
+
+    @pyqtProperty(bool, notify=catalogChanged)
+    def isIndexingCatalog(self) -> bool:
+        """True while background sync database indexing is in progress."""
+        return self._catalog_service._is_indexing
+
+    @pyqtProperty(int, notify=catalogChanged)
+    def officialSyncCount(self) -> int:
+        """Total packages indexed from official pacman sync databases."""
+        return len(self._catalog_service._official_repo_cache)
+
+    @pyqtProperty(bool, notify=personalizationChanged)
+    def personalizationEnabled(self) -> bool:
+        """True if recommendations personalization is active."""
+        return self._catalog_service.is_personalization_enabled()
+
+    @pyqtProperty(bool, notify=personalizationChanged)
+    def hasPersonalizationHistory(self) -> bool:
+        """True if local history is present."""
+        return self._catalog_service.has_personalization_history()
+
+    @pyqtProperty(int, notify=personalizationChanged)
+    def favoritesCount(self) -> int:
+        """Total favorited packages count."""
+        return self._catalog_service.get_favorites_count()
+
+    @pyqtProperty(str, notify=updatesChanged)
+    def lastUpdateOutcome(self) -> str:
+        """Outcome of last system update: ''|'complete'|'partial'|'cancelled'|'failed'."""
+        return self._last_update_outcome
+
+    @pyqtProperty(str, notify=updatesChanged)
+    def lastUpdateSummary(self) -> str:
+        """Summary description of last system update."""
+        return self._last_update_summary
+
     @pyqtProperty(bool, notify=maintenanceStatusChanged)
     def maintenanceRequired(self) -> bool:
         """True if any core Redshift OS component requires repair."""
@@ -277,7 +452,7 @@ class StoreController(QObject):
         return self._maintenance_service.is_repairing
 
     # -------------------------------------------------------------------------
-    # Public Slots (Section 3.2)
+    # Public Slots: Filter & Search Controls (TASK-B2)
     # -------------------------------------------------------------------------
 
     @pyqtSlot(str, str, str)
@@ -286,15 +461,42 @@ class StoreController(QObject):
         self._search_query = query.strip()
         self._active_source_filter = source_filter or "all"
         self._active_category = category_filter or "all"
+        self._catalog_offset = 0
         self.filterChanged.emit()
 
-        results = self._catalog_service.search(
-            query=self._search_query,
-            source_filter=self._active_source_filter,
-            category_filter=self._active_category,
-        )
-        self._catalog_model.set_items(results)
-        self.catalogChanged.emit()
+        if self._search_query:
+            self._catalog_service.record_search_query(self._search_query)
+
+        self._execute_catalog_search()
+
+    @pyqtSlot(str)
+    def setInstalledFilter(self, installed_filter: str) -> None:
+        """Filter catalog by installed status ('all'|'installed'|'not_installed')."""
+        filt = installed_filter or "all"
+        if self._active_installed_filter != filt:
+            self._active_installed_filter = filt
+            self._catalog_offset = 0
+            self.filterChanged.emit()
+            self._execute_catalog_search()
+
+    @pyqtSlot(str)
+    def setSortBy(self, sort_by: str) -> None:
+        """Set sorting order ('relevance'|'popularity'|'name'|'recent')."""
+        sb = sort_by or "relevance"
+        if self._active_sort_by != sb:
+            self._active_sort_by = sb
+            self._catalog_offset = 0
+            self.filterChanged.emit()
+            self._execute_catalog_search()
+
+    @pyqtSlot(bool)
+    def setIncludeSystemPackages(self, include_sys: bool) -> None:
+        """Toggle whether to include low-level libraries and system packages."""
+        if self._include_system_packages != include_sys:
+            self._include_system_packages = bool(include_sys)
+            self._catalog_offset = 0
+            self.filterChanged.emit()
+            self._execute_catalog_search()
 
     @pyqtSlot(str)
     def setCategory(self, category: str) -> None:
@@ -302,8 +504,10 @@ class StoreController(QObject):
         cat = category or "all"
         if self._active_category != cat:
             self._active_category = cat
+            self._catalog_offset = 0
             self.filterChanged.emit()
-            self.search(self._search_query, self._active_source_filter, self._active_category)
+            self._catalog_service.record_category_visit(cat)
+            self._execute_catalog_search()
 
     @pyqtSlot(str)
     def setSourceFilter(self, source_filter: str) -> None:
@@ -311,8 +515,137 @@ class StoreController(QObject):
         src = source_filter or "all"
         if self._active_source_filter != src:
             self._active_source_filter = src
+            self._catalog_offset = 0
             self.filterChanged.emit()
-            self.search(self._search_query, self._active_source_filter, self._active_category)
+            self._execute_catalog_search()
+
+    @pyqtSlot()
+    def loadMoreCatalog(self) -> None:
+        """Load next page of catalog results and append to catalogModel."""
+        if not self._can_load_more_catalog:
+            return
+
+        self._catalog_offset += self._catalog_page_size
+        res = self._catalog_service.search_catalog(
+            query=self._search_query,
+            source_filter=self._active_source_filter,
+            category_filter=self._active_category,
+            installed_filter=self._active_installed_filter,
+            apps_only=not self._include_system_packages,
+            sort_by=self._active_sort_by,
+            offset=self._catalog_offset,
+            limit=self._catalog_page_size,
+        )
+
+        self._can_load_more_catalog = res.get("has_more", False)
+        items = res.get("items", [])
+        if items:
+            self._catalog_model.append_items(items)
+            self.catalogChanged.emit()
+
+    @pyqtSlot(str)
+    def exploreSection(self, section_id: str) -> None:
+        """Configure category/source/sort filter corresponding to Home section and explore."""
+        clean_sec = section_id.strip().lower()
+        if clean_sec == "development":
+            self._active_category = "development"
+            self._active_source_filter = "all"
+            self._active_sort_by = "relevance"
+        elif clean_sec == "games":
+            self._active_category = "games"
+            self._active_source_filter = "all"
+            self._active_sort_by = "relevance"
+        elif clean_sec == "design":
+            self._active_category = "design"
+            self._active_source_filter = "all"
+            self._active_sort_by = "relevance"
+        elif clean_sec == "communication":
+            self._active_category = "internet"
+            self._active_source_filter = "all"
+            self._active_sort_by = "relevance"
+        elif clean_sec == "getting_started":
+            self._active_category = "all"
+            self._active_source_filter = "official"
+            self._active_sort_by = "popularity"
+        elif clean_sec == "popular":
+            self._active_category = "all"
+            self._active_source_filter = "all"
+            self._active_sort_by = "popularity"
+        elif clean_sec.startswith("aur_"):
+            self._active_category = "all"
+            self._active_source_filter = "aur"
+            self._active_sort_by = "popularity"
+        else:
+            self._active_category = "all"
+            self._active_source_filter = "all"
+            self._active_sort_by = "relevance"
+
+        self._search_query = ""
+        self._catalog_offset = 0
+        self.filterChanged.emit()
+        self._execute_catalog_search()
+
+    def _execute_catalog_search(self) -> None:
+        """Internal helper to execute catalog search with active pagination and filters."""
+        res = self._catalog_service.search_catalog(
+            query=self._search_query,
+            source_filter=self._active_source_filter,
+            category_filter=self._active_category,
+            installed_filter=self._active_installed_filter,
+            apps_only=not self._include_system_packages,
+            sort_by=self._active_sort_by,
+            offset=self._catalog_offset,
+            limit=self._catalog_page_size,
+        )
+
+        items = res.get("items", [])
+        self._catalog_model.set_items(items)
+        self._catalog_total_count = res.get("total", 0)
+        self._can_load_more_catalog = res.get("has_more", False)
+        self._catalog_status = res.get("status", "ready")
+        self._catalog_status_message = res.get("message", "")
+        self.catalogChanged.emit()
+
+    # -------------------------------------------------------------------------
+    # Personalization Slots (TASK-B2)
+    # -------------------------------------------------------------------------
+
+    @pyqtSlot(str)
+    def toggleFavorite(self, pkg_name: str) -> None:
+        """Toggle favorite status of a package and refresh affected models."""
+        clean = pkg_name.strip()
+        if not clean:
+            return
+        is_fav = self._catalog_service.toggle_favorite(clean)
+        self.personalizationChanged.emit()
+
+        # Update selected package if matching
+        if self._selected_package.get("name") == clean:
+            self._selected_package["is_favorite"] = is_fav
+            self._selected_package["isFavorite"] = is_fav
+            self.selectedPackageChanged.emit()
+
+        # Refresh home recommendations
+        self.refreshHomeSections()
+
+    @pyqtSlot(bool)
+    def setPersonalizationEnabled(self, enabled: bool) -> None:
+        """Enable or disable recommendations personalization."""
+        self._catalog_service.set_personalization_enabled(enabled)
+        self.personalizationChanged.emit()
+        self.refreshHomeSections()
+
+    @pyqtSlot()
+    def clearPersonalizationHistory(self) -> None:
+        """Clear all local browsing and search history."""
+        self._catalog_service.clear_personalization_history()
+        self.personalizationChanged.emit()
+        self.refreshHomeSections()
+        self.toastMessage.emit("info", "Histórico de recomendações locais limpo com sucesso.")
+
+    # -------------------------------------------------------------------------
+    # Package Detail & Preview Slots
+    # -------------------------------------------------------------------------
 
     @pyqtSlot(str, str)
     def selectPackage(self, pkg_name: str, repository: str = "") -> None:
@@ -322,37 +655,77 @@ class StoreController(QObject):
             self.selectedPackageChanged.emit()
             return
 
-        item = self._catalog_service.get_package(pkg_name, repository)
+        clean = pkg_name.strip()
+        self._catalog_service.record_package_view(clean)
+
+        item = self._catalog_service.get_package(clean, repository)
         if item:
             self._selected_package = item.to_dict()
         else:
-            # Fallback dictionary if not in cache
             self._selected_package = {
-                "name": pkg_name,
-                "displayName": pkg_name,
+                "name": clean,
+                "displayName": clean,
                 "repository": repository or "official",
                 "source": "aur" if repository == "aur" else "official",
                 "installed": False,
                 "updateAvailable": False,
                 "isProtected": False,
+                "isApplication": True,
             }
         self.selectedPackageChanged.emit()
 
-        # If it's an AUR package, automatically fetch PKGBUILD preview
         if self._selected_package.get("source") == "aur":
-            self.fetchPkgbuildPreview(pkg_name)
+            self.fetchPkgbuildPreview(clean)
         else:
             self._pkgbuild_preview = ""
             self.pkgbuildPreviewChanged.emit()
 
     @pyqtSlot()
     def refreshCatalog(self) -> None:
-        """Reload featured home packages and default catalog."""
+        """Reload featured home packages, discovery sections, and explore catalog."""
         featured = self._catalog_service.get_featured_packages()
         self._featured_model.set_items(featured)
-        if not self._search_query:
-            self._catalog_model.set_items(featured)
-            self.catalogChanged.emit()
+        self.refreshHomeSections()
+        self.refreshAurDiscovery()
+        self._execute_catalog_search()
+
+    @pyqtSlot()
+    def refreshHomeSections(self) -> None:
+        """Populate the 8 Home page sections."""
+        sections = self._catalog_service.get_home_sections()
+        if "featured" in sections:
+            self._featured_model.set_items(sections["featured"])
+        if "recommended" in sections:
+            self._recommended_model.set_items(sections["recommended"])
+        if "popular" in sections:
+            self._popular_community_model.set_items(sections["popular"])
+        if "getting_started" in sections:
+            self._getting_started_model.set_items(sections["getting_started"])
+        if "development" in sections:
+            self._development_section_model.set_items(sections["development"])
+        if "games" in sections:
+            self._games_section_model.set_items(sections["games"])
+        if "design" in sections:
+            self._design_section_model.set_items(sections["design"])
+        if "communication" in sections:
+            self._communication_section_model.set_items(sections["communication"])
+
+    @pyqtSlot()
+    def refreshAurDiscovery(self) -> None:
+        """Populate the 6 AUR discovery sections."""
+        aur_sections = self._catalog_service.get_aur_discovery_sections()
+        if "aur_popular" in aur_sections:
+            self._aur_popular_model.set_items(aur_sections["aur_popular"])
+        if "aur_community" in aur_sections:
+            self._aur_community_model.set_items(aur_sections["aur_community"])
+        if "aur_development" in aur_sections:
+            self._aur_dev_model.set_items(aur_sections["aur_development"])
+        if "aur_games" in aur_sections:
+            self._aur_games_model.set_items(aur_sections["aur_games"])
+        if "aur_productivity" in aur_sections:
+            self._aur_productivity_model.set_items(aur_sections["aur_productivity"])
+        if "aur_curated" in aur_sections:
+            self._aur_curated_model.set_items(aur_sections["aur_curated"])
 
     @pyqtSlot()
     @pyqtSlot(bool)
@@ -387,6 +760,10 @@ class StoreController(QObject):
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
 
+    # -------------------------------------------------------------------------
+    # Transaction Management & Safe Arch Linux Updates (TASK-B2)
+    # -------------------------------------------------------------------------
+
     @pyqtSlot(str, str)
     def installPackage(self, pkg_name: str, repository: str = "official") -> None:
         """Initiate asynchronous package installation."""
@@ -407,16 +784,27 @@ class StoreController(QObject):
 
     @pyqtSlot(str, str)
     def updatePackage(self, pkg_name: str, repository: str = "official") -> None:
-        """Initiate single package update."""
+        """Initiate package update with safety check against partial updates."""
         clean_name = pkg_name.strip()
         if not clean_name:
             self.toastMessage.emit("error", "Nome de pacote inválido.")
             return
+
+        # Safe update behavior for Arch Linux: prevent partial upgrades on official packages
+        if repository.lower() not in ("aur", "local-aur"):
+            self.toastMessage.emit(
+                "info",
+                f"No Arch Linux, atualizações de pacotes oficiais ({clean_name}) requerem atualização completa do sistema para evitar inconsistências de bibliotecas. Iniciando atualização completa...",
+            )
+            self.updateAll()
+            return
+
         self._tx_service.update_package(clean_name, repository)
 
     @pyqtSlot()
     def updateAll(self) -> None:
-        """Initiate full system upgrade."""
+        """Initiate full system upgrade with tracking."""
+        self._pre_tx_updates_count = self._updates_model.count
         self._tx_service.update_all()
 
     @pyqtSlot()
@@ -518,6 +906,11 @@ class StoreController(QObject):
         self._updates_model.set_items(updates)
         self.updatesChanged.emit()
 
+    def _on_index_ready(self) -> None:
+        """Handle background sync index completion."""
+        self.catalogChanged.emit()
+        self._execute_catalog_search()
+
     def _on_tx_state_changed(self, state: str, status_text: str) -> None:
         """Relay transaction state changes to QML."""
         self.operationStateChanged.emit()
@@ -537,18 +930,61 @@ class StoreController(QObject):
         self.lockStatusChanged.emit()
 
     def _on_tx_finished(self, success: bool, action: str, message: str) -> None:
-        """Handle transaction completion: notify user and refresh models."""
-        level = "success" if success else "error"
-        self.toastMessage.emit(level, message)
+        """Handle transaction completion: post-verify updates, notify user, and refresh models."""
+        toast_level = "success" if success else "error"
+        toast_message = message
 
-        if success:
-            # Refresh local models automatically
-            self.refreshInstalled()
-            self.refreshCatalog()
+        # Post-verification and outcome computation for update operations
+        if action in ("update_all", "update"):
+            remaining_updates = self._catalog_service.check_updates()
+            self._updates_model.set_items(remaining_updates)
+
+            if not success:
+                if self._tx_service.state == "cancelled":
+                    self._last_update_outcome = "cancelled"
+                    self._last_update_summary = message or "Atualização cancelada pelo usuário."
+                    toast_level = "warning"
+                else:
+                    self._last_update_outcome = "failed"
+                    self._last_update_summary = message or "Falha durante o processo de atualização."
+                    toast_level = "error"
+            else:
+                rem_len = len(remaining_updates)
+                if rem_len == 0:
+                    self._last_update_outcome = "complete"
+                    self._last_update_summary = "Sistema atualizado: todas as atualizações pendentes foram aplicadas com sucesso."
+                    toast_level = "success"
+                elif 0 < rem_len < self._pre_tx_updates_count:
+                    self._last_update_outcome = "partial"
+                    self._last_update_summary = f"Atualização parcial: restam {rem_len} pacote(s) pendentes."
+                    toast_level = "warning"
+                elif rem_len >= self._pre_tx_updates_count > 0:
+                    self._last_update_outcome = "partial"
+                    self._last_update_summary = f"Transação concluída, mas {rem_len} atualização(ões) ainda constam pendentes."
+                    toast_level = "warning"
+                else:
+                    self._last_update_outcome = "complete"
+                    self._last_update_summary = "Sistema atualizado com sucesso."
+                    toast_level = "success"
+
+            toast_message = self._last_update_summary or message
+
+            if hasattr(self._tx_service, "set_post_verification_outcome"):
+                self._tx_service.set_post_verification_outcome(self._last_update_outcome, self._last_update_summary)
+
+            self.updatesChanged.emit()
+        else:
             self.checkUpdates()
 
-            # Refresh selected package details if one was open
-            selected_name = self._selected_package.get("name")
-            if selected_name:
-                repo = self._selected_package.get("repository", "")
-                self.selectPackage(selected_name, repo)
+        # Emit user toast notification with verified level and summary
+        self.toastMessage.emit(toast_level, toast_message)
+
+        # Refresh local models automatically
+        self.refreshInstalled()
+        self.refreshCatalog()
+
+        # Refresh selected package details if one was open
+        selected_name = self._selected_package.get("name")
+        if selected_name:
+            repo = self._selected_package.get("repository", "")
+            self.selectPackage(selected_name, repo)
