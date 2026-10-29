@@ -1,3 +1,7 @@
+if test -d "$HOME/.local/bin"
+    fish_add_path -g "$HOME/.local/bin"
+end
+
 # Commands to run in interactive sessions can go here
 if status is-interactive
     # No greeting

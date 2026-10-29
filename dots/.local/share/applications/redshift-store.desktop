@@ -5,7 +5,7 @@ GenericName=Software Center
 GenericName[pt_BR]=Central de Aplicativos
 Comment=Discover, install, and update Arch Linux & AUR packages on Redshift OS
 Comment[pt_BR]=Descubra, instale e atualize aplicativos oficiais e do AUR no Redshift OS
-Exec=redshift-store
+Exec=/usr/bin/sh -c "command -v redshift-store >/dev/null 2>&1 && exec redshift-store || exec ~/.local/bin/redshift-store"
 Icon=redshift-store
 Terminal=false
 Categories=System;PackageManager;Settings;
@@ -16,9 +16,9 @@ Actions=Updates;Installed;
 [Desktop Action Updates]
 Name=Verificar Atualizações
 Name[en_US]=Check for Updates
-Exec=redshift-store --page updates
+Exec=/usr/bin/sh -c "command -v redshift-store >/dev/null 2>&1 && exec redshift-store --page updates || exec ~/.local/bin/redshift-store --page updates"
 
 [Desktop Action Installed]
 Name=Pacotes Instalados
 Name[en_US]=Installed Packages
-Exec=redshift-store --page installed
+Exec=/usr/bin/sh -c "command -v redshift-store >/dev/null 2>&1 && exec redshift-store --page installed || exec ~/.local/bin/redshift-store --page installed"

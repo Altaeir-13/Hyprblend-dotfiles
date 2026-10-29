@@ -1429,12 +1429,49 @@ fi
     desktop_file="${REPO_ROOT}/dots/.local/share/applications/redshift-store.desktop"
     [[ -f "$desktop_file" ]] || exit 1
     grep -q "^Type=Application" "$desktop_file" || exit 2
-    grep -q "^Exec=redshift-store" "$desktop_file" || exit 3
+    grep -q '^Exec=/usr/bin/sh -c "command -v redshift-store' "$desktop_file" || exit 3
     grep -q "^Actions=Updates;Installed;" "$desktop_file" || exit 4
     grep -q "^\[Desktop Action Updates\]" "$desktop_file" || exit 5
     grep -q "^\[Desktop Action Installed\]" "$desktop_file" || exit 6
-) && pass "Arquivo .desktop redshift-store.desktop validado (chaves XDG, Exec e Actions)" \
-  || fail "Arquivo .desktop redshift-store.desktop inválido ou ausente"
+
+    # Verify no hardcoded /home/ paths
+    if grep -q "/home/" "$desktop_file"; then
+        echo "Found hardcoded /home/ path in $desktop_file" >&2
+        exit 7
+    fi
+
+    # Validate with desktop-file-validate when installed on host/runner
+    if command -v desktop-file-validate >/dev/null 2>&1; then
+        desktop-file-validate "$desktop_file" || exit 8
+    fi
+
+    # Verify Exec line resolution works even with reduced PATH="/usr/bin"
+    sb_desktop="$(create_sandbox "desktop-exec-test")"
+    mkdir -p "$sb_desktop/home/.local/bin"
+    cat << 'EOF' > "$sb_desktop/home/.local/bin/redshift-store"
+#!/usr/bin/env sh
+echo "MOCK_LAUNCHER_CALLED"
+EOF
+    chmod +x "$sb_desktop/home/.local/bin/redshift-store"
+    exec_cmd="$(grep "^Exec=" "$desktop_file" | head -n 1 | cut -d= -f2-)"
+    res="$(PATH="/usr/bin" HOME="$sb_desktop/home" eval "$exec_cmd" 2>&1)"
+    [[ "$res" == *"MOCK_LAUNCHER_CALLED"* ]] || exit 9
+) && pass "Arquivo .desktop redshift-store.desktop validado (portabilidade, sem /home/, Exec resiliente a PATH restrito)" \
+  || fail "Arquivo .desktop redshift-store.desktop inválido, com caminhos absolutos ou falha no Exec"
+
+# 10.3 Shell and graphical environment PATH integration
+(
+    # env.lua
+    grep -q 'local xdg_bin_home = os.getenv("XDG_BIN_HOME") or (home_dir .. "/.local/bin")' "${REPO_ROOT}/dots/.config/hypr/hyprland/env.lua" || exit 1
+    grep -q 'hl.env("PATH", xdg_bin_home .. ":" .. path_old)' "${REPO_ROOT}/dots/.config/hypr/hyprland/env.lua" || exit 2
+
+    # fish config.fish
+    grep -q 'fish_add_path -g "$HOME/.local/bin"' "${REPO_ROOT}/dots/.config/fish/config.fish" || exit 3
+
+    # zsh dots-hyprland.zsh
+    grep -q 'export PATH="${XDG_BIN_HOME:-$HOME/.local/bin}:$PATH"' "${REPO_ROOT}/dots/.config/zshrc.d/dots-hyprland.zsh" || exit 4
+) && pass "Integração de ~/.local/bin ao PATH em Hyprland (env.lua), Fish e Zsh" \
+  || fail "Configuração de ~/.local/bin no PATH ausente ou incorreta em env.lua, fish ou zsh"
 
 # 10.3 PKGBUILD syntax, dependency, and package() function audit
 (
@@ -1535,24 +1572,86 @@ else
     fail "Suíte de testes unitários Python e integração QML (test_redshift_store.py) falhou"
 fi
 
-# 10.8 Launcher Coexistence and Override Logic
+# 10.9 Launcher Semantic Version Resolution, Structural Integrity and Override Logic
 (
     sb_coexist="$(create_sandbox "redshift-coexist")"
-    user_main="$sb_coexist/home/.local/share/redshift-os/redshift-store/main.py"
-    mkdir -p "$(dirname "$user_main")"
-    echo "print('USER')" > "$user_main"
+    user_dir="$sb_coexist/home/.local/share/redshift-os/redshift-store"
+    sys_dir="$sb_coexist/sys/redshift-os/redshift-store"
+    user_main="$user_dir/main.py"
+    sys_main="$sys_dir/main.py"
 
-    res_user="$(HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SOURCE=user "${REPO_ROOT}/dots/.local/bin/redshift-store" 2>&1)"
-    [[ "$res_user" == "USER" ]] || exit 1
+    mkdir -p "$user_dir/backend" "$user_dir/qml"
+    touch "$user_dir/backend/__init__.py" "$user_dir/qml/Main.qml"
+    mkdir -p "$sys_dir/backend" "$sys_dir/qml"
+    touch "$sys_dir/backend/__init__.py" "$sys_dir/qml/Main.qml"
 
-    res_repo="$(QT_QPA_PLATFORM=offscreen HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SOURCE=repo "${REPO_ROOT}/dots/.local/bin/redshift-store" --mock --self-test 2>&1)"
-    [[ "$res_repo" == *"AUTOTESTE CONCLUÍDO"* ]] || exit 2
+    # Test Case A: sys has VERSION 2.0.0, user has VERSION 1.0.0, but user has NEWER mtime
+    cat << 'EOF' > "$sys_main"
+#!/usr/bin/env python3
+VERSION = "2.0.0"
+print("SYS_V2")
+EOF
+    cat << 'EOF' > "$user_main"
+#!/usr/bin/env python3
+VERSION = "1.0.0"
+print("USER_V1")
+EOF
+    touch -d "2020-01-01 00:00:00" "$sys_main"
+    touch -d "2026-10-28 00:00:00" "$user_main"
 
-    # Test invalid REDSHIFT_STORE_SOURCE exits with error
+    res_sem="$(HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SYSTEM_MAIN="$sys_main" "${REPO_ROOT}/dots/.local/bin/redshift-store" 2>&1)"
+    [[ "$res_sem" == "SYS_V2" ]] || exit 1
+
+    # Test Case B: Both have equal VERSION 1.0.0 -> INSTALLED_MAIN (user) is deterministically selected
+    cat << 'EOF' > "$sys_main"
+#!/usr/bin/env python3
+VERSION = "1.0.0"
+print("SYS_V1")
+EOF
+    cat << 'EOF' > "$user_main"
+#!/usr/bin/env python3
+VERSION = "1.0.0"
+print("USER_V1")
+EOF
+    touch -d "2026-10-28 00:00:00" "$sys_main"
+    touch -d "2020-01-01 00:00:00" "$user_main"
+
+    res_eq="$(HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SYSTEM_MAIN="$sys_main" "${REPO_ROOT}/dots/.local/bin/redshift-store" 2>&1)"
+    [[ "$res_eq" == "USER_V1" ]] || exit 2
+
+    # Test Case C: user has VERSION 2.1.0, sys has 1.0.0 -> INSTALLED_MAIN selected
+    cat << 'EOF' > "$user_main"
+#!/usr/bin/env python3
+VERSION = "2.1.0"
+print("USER_V2_1")
+EOF
+    res_usr_newer="$(HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SYSTEM_MAIN="$sys_main" "${REPO_ROOT}/dots/.local/bin/redshift-store" 2>&1)"
+    [[ "$res_usr_newer" == "USER_V2_1" ]] || exit 3
+
+    # Test Case D: Structural integrity preference (sys is missing qml/Main.qml, user is intact)
+    rm -f "$sys_dir/qml/Main.qml"
+    cat << 'EOF' > "$sys_main"
+#!/usr/bin/env python3
+VERSION = "9.9.9"
+print("SYS_BROKEN")
+EOF
+    res_intact="$(HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SYSTEM_MAIN="$sys_main" "${REPO_ROOT}/dots/.local/bin/redshift-store" 2>&1)"
+    [[ "$res_intact" == "USER_V2_1" ]] || exit 4
+
+    # Test Case E: REDSHIFT_STORE_SOURCE overrides
+    res_ov_sys="$(HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SYSTEM_MAIN="$sys_main" REDSHIFT_STORE_SOURCE=system "${REPO_ROOT}/dots/.local/bin/redshift-store" 2>&1)"
+    [[ "$res_ov_sys" == "SYS_BROKEN" ]] || exit 5
+
+    res_ov_usr="$(HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SYSTEM_MAIN="$sys_main" REDSHIFT_STORE_SOURCE=user "${REPO_ROOT}/dots/.local/bin/redshift-store" 2>&1)"
+    [[ "$res_ov_usr" == "USER_V2_1" ]] || exit 6
+
+    res_ov_repo="$(QT_QPA_PLATFORM=offscreen HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SOURCE=repo "${REPO_ROOT}/dots/.local/bin/redshift-store" --mock --self-test 2>&1)"
+    [[ "$res_ov_repo" == *"AUTOTESTE CONCLUÍDO"* ]] || exit 7
+
     res_inv="$(HOME="$sb_coexist/home" XDG_DATA_HOME="$sb_coexist/home/.local/share" REDSHIFT_STORE_SOURCE=invalid "${REPO_ROOT}/dots/.local/bin/redshift-store" 2>&1 || true)"
-    [[ "$res_inv" == *"Invalid REDSHIFT_STORE_SOURCE"* ]] || exit 3
-) && pass "Resolução de coexistência e REDSHIFT_STORE_SOURCE no launcher redshift-store" \
-  || fail "Resolução de coexistência ou REDSHIFT_STORE_SOURCE no launcher redshift-store falhou"
+    [[ "$res_inv" == *"Invalid REDSHIFT_STORE_SOURCE"* ]] || exit 8
+) && pass "Resolução de coexistência semântica (versão, integridade e overrides) no launcher redshift-store" \
+  || fail "Resolução de coexistência semântica no launcher redshift-store falhou"
 
 printf "\n=============================================================================\n"
 printf "Resumo dos Testes: ${CLR_GREEN}%d aprovados${CLR_RST}, ${CLR_RED}%d falharam${CLR_RST} (total: %d)\n" \

@@ -166,17 +166,17 @@ A Redshift Store faz parte do núcleo de experiência do Redshift OS e é integr
 O projeto conta com suíte de testes automatizados executáveis sem afetar o sistema hospedeiro:
 
 ### 7.1 Suíte de Testes Unitários e Integração QML (Python)
-Executa **18 baterias completas de testes** cobrindo segurança, modelos, catálogo mock e nativo, sincronização Material You (`colors.json` vs `scheme.json` e proteção WCAG contra baixo contraste), menus interativos do AUR (`--cleanmenu`/`--diffmenu`), tratamento de recusa Polkit (`exit 126/127`), controller e renderização headless de `Main.qml`:
+Executa **19 baterias completas de testes** cobrindo segurança, modelos, catálogo mock e nativo, sincronização Material You (`colors.json` vs `scheme.json` e proteção WCAG contra baixo contraste), menus interativos do AUR (`--cleanmenu`/`--diffmenu`), tratamento de recusa Polkit (`exit 126/127`), startup não-bloqueante (`checkUpdates` assíncrono em thread de background), controller e renderização headless de `Main.qml`:
 ```bash
 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -p "test_redshift_store.py" -v
 ```
 
 ### 7.2 Suíte Global de Regressão do Repositório
-A suíte em `tests/run-tests.sh` inclui a **Seção 10** dedicada à Redshift Store (totalizando **180 asserções**):
+A suíte em `tests/run-tests.sh` inclui a **Seção 10** dedicada à Redshift Store (totalizando **181 asserções**):
 ```bash
 bash tests/run-tests.sh
 ```
-A suíte valida sintaxe, permissões, conformidade com os perfis declarativos (`minimal`, `hybrid`, `complete`), coexistência entre `/usr/share` e `~/.local/share` (`REDSHIFT_STORE_SOURCE` e comparação de `mtime`), ciclo de vida completo de instalação e desinstalação em sandbox isolado temporário, garantindo 100% de aprovação.
+A suíte valida sintaxe, permissões, conformidade com os perfis declarativos (`minimal`, `hybrid`, `complete`), integração portátil do `.desktop` e exposição de `~/.local/bin` no `PATH` (`env.lua`, `config.fish`, `dots-hyprland.zsh`), coexistência determinística entre `/usr/share` e `~/.local/share` (`REDSHIFT_STORE_SOURCE`, integridade estrutural e comparação de versão semântica via `vercmp` sem depender de `mtime`), ciclo de vida completo de instalação e desinstalação em sandbox isolado temporário, garantindo 100% de aprovação.
 
 ### 7.3 Diferença entre Verificações Unitárias, Mocks, Renderização Headless, Container Isolado e Validação Operacional
 
