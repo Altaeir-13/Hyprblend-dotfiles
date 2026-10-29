@@ -281,6 +281,11 @@ class ThemeService(QObject):
                     self._watcher.addPath(str(parent))
                 except Exception:
                     pass
+            elif parent.parent.exists():
+                try:
+                    self._watcher.addPath(str(parent.parent))
+                except Exception:
+                    pass
 
             if file_path.exists():
                 try:
@@ -297,7 +302,8 @@ class ThemeService(QObject):
         # Reset preview override so disk changes take precedence
         self._preview_override_is_dark = None
 
-        # Check if any watched file was replaced atomically (new inode)
+        # Check if any watched file or directory was replaced atomically (new inode)
+        current_dirs = set(self._watcher.directories())
         current_files = set(self._watcher.files())
         for file_path in [
             self._colors_json_path,
@@ -307,10 +313,20 @@ class ThemeService(QObject):
             self._applied_scheme_type_path,
             self._color_txt_path,
         ]:
+            parent = file_path.parent
+            parent_str = str(parent)
+            if parent.exists() and parent_str not in current_dirs:
+                try:
+                    self._watcher.addPath(parent_str)
+                    current_dirs.add(parent_str)
+                except Exception:
+                    pass
+
             path_str = str(file_path)
             if file_path.exists() and path_str not in current_files:
                 try:
                     self._watcher.addPath(path_str)
+                    current_files.add(path_str)
                 except Exception:
                     pass
 
@@ -350,16 +366,20 @@ class ThemeService(QObject):
         for k, v in raw_tokens.items():
             set_token(k, v)
 
-        # Functional tokens (Material 3 semantics)
+        # Functional and semantic support tokens (Material 3 semantics)
         functional = {
-            "success": "#b5ccba" if is_dark else "#386a42",
-            "on_success": "#213528" if is_dark else "#ffffff",
-            "success_container": "#374b3e" if is_dark else "#b7f1be",
-            "on_success_container": "#d1e9d6" if is_dark else "#00210b",
-            "warning": "#ffb951" if is_dark else "#825500",
-            "on_warning": "#452b00" if is_dark else "#ffffff",
-            "warning_container": "#643f00" if is_dark else "#ffddb4",
-            "on_warning_container": "#ffddb4" if is_dark else "#2a1700",
+            "success": normalized.get("success", "#b5ccba" if is_dark else "#386a42"),
+            "on_success": normalized.get("on_success", "#213528" if is_dark else "#ffffff"),
+            "success_container": normalized.get("success_container", "#374b3e" if is_dark else "#b7f1be"),
+            "on_success_container": normalized.get("on_success_container", "#d1e9d6" if is_dark else "#00210b"),
+            "warning": normalized.get("warning", "#ffb951" if is_dark else "#825500"),
+            "on_warning": normalized.get("on_warning", "#452b00" if is_dark else "#ffffff"),
+            "warning_container": normalized.get("warning_container", "#643f00" if is_dark else "#ffddb4"),
+            "on_warning_container": normalized.get("on_warning_container", "#ffddb4" if is_dark else "#2a1700"),
+            "info": normalized.get("info", "#82cfff" if is_dark else "#0061a4"),
+            "on_info": normalized.get("on_info", "#003258" if is_dark else "#ffffff"),
+            "info_container": normalized.get("info_container", "#00497d" if is_dark else "#d1e4ff"),
+            "on_info_container": normalized.get("on_info_container", "#d1e4ff" if is_dark else "#001d36"),
         }
 
         for fk, fv in functional.items():
@@ -399,6 +419,8 @@ class ThemeService(QObject):
             ("on_success_container", "success_container", "#00210b", "#d1e9d6"),
             ("on_warning", "warning", "#452b00", "#ffffff"),
             ("on_warning_container", "warning_container", "#2a1700", "#ffddb4"),
+            ("on_info", "info", "#003258", "#ffffff"),
+            ("on_info_container", "info_container", "#001d36", "#d1e4ff"),
         ]
 
         for fg_key, bg_key, target_dark, target_light in contrast_pairs:

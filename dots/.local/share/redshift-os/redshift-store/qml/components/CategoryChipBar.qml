@@ -104,9 +104,10 @@ Rectangle {
                     { id: "development", label: "Desenvolvimento", icon: "code" },
                     { id: "games", label: "Jogos", icon: "sports_esports" },
                     { id: "multimedia", label: "Multimídia", icon: "movie" },
+                    { id: "design", label: "Design & Criação", icon: "palette" },
+                    { id: "office", label: "Escritório", icon: "edit_note" },
                     { id: "utilities", label: "Utilitários", icon: "construction" },
-                    { id: "system", label: "Sistema", icon: "memory" },
-                    { id: "office", label: "Escritório", icon: "edit_note" }
+                    { id: "system", label: "Sistema", icon: "memory" }
                 ]
 
                 delegate: Rectangle {

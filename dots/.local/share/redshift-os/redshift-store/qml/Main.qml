@@ -201,6 +201,12 @@ ApplicationWindow {
                         }
                         root.currentPage = "catalog";
                     }
+                    onSectionExploreRequested: (sectionId) => {
+                        if (root.store && root.store.exploreSection) {
+                            root.store.exploreSection(sectionId);
+                        }
+                        root.currentPage = "catalog";
+                    }
                     onNavigateUpdatesRequested: root.currentPage = "updates"
                 }
 

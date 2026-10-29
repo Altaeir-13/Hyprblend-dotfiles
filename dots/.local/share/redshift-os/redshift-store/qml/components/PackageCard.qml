@@ -20,8 +20,14 @@ Rectangle {
     property int votes: 0
     property bool isBusy: false
 
+    // Novos Contratos de Popularidade, Proveniência e Favoritos
+    property string popularityLabel: ""
+    property string provenanceLabel: ""
+    property bool isFavorite: false
+
     signal clicked()
-    signal actionTriggered(string action, string pkgName, string repo)
+    signal actionTriggered(string action, string pkgName, string repository)
+    signal favoriteToggled(string pkgName)
 
     // --- Helpers de Tema e Fallbacks M3 Expressive ---
     readonly property var defaultTheme: ({
@@ -89,9 +95,10 @@ Rectangle {
             case "development": return "code";
             case "games": return "sports_esports";
             case "multimedia": return "movie";
+            case "design": return "palette";
             case "internet": return "public";
             case "system": return "memory";
-            case "office": return "description";
+            case "office": return "edit_note";
             case "featured": return "auto_awesome";
             default: return "inventory_2";
         }
@@ -101,7 +108,7 @@ Rectangle {
     readonly property bool isHovered: cardMouseArea.containsMouse
 
     implicitWidth: 320
-    implicitHeight: 184
+    implicitHeight: 200
     radius: root.getToken("radiusNormal", 14)
 
     color: isHovered ?
@@ -119,17 +126,17 @@ Rectangle {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 14
-        spacing: 10
+        spacing: 8
 
-        // 1. Linha Superior: Avatar/Ícone + Nomes + Repositório
+        // 1. Linha Superior: Avatar/Ícone + Nomes + Repositório + Botão Favorito
         RowLayout {
             Layout.fillWidth: true
-            spacing: 12
+            spacing: 10
 
             // Avatar / Emblema da Categoria ou Ícone XDG Real
             Rectangle {
-                width: 48
-                height: 48
+                width: 44
+                height: 44
                 radius: root.getToken("radiusNormal", 14)
                 color: root.isAur ?
                     root.getToken("tertiaryContainer", "#633b48") :
@@ -138,13 +145,13 @@ Rectangle {
                 Image {
                     id: pkgIconImage
                     anchors.centerIn: parent
-                    width: 30
-                    height: 30
+                    width: 28
+                    height: 28
                     sourceSize: Qt.size(64, 64)
                     smooth: true
                     mipmap: true
                     visible: status === Image.Ready
-                    source: (root.iconName && root.iconName.length > 0 && typeof StoreBridge !== "undefined" && StoreBridge && StoreBridge.hasDesktopIcon(root.iconName)) ? ("image://xdgicon/" + root.iconName) : ""
+                    source: (root.iconName && root.iconName.length > 0 && typeof StoreBridge !== "undefined" && StoreBridge && StoreBridge.hasDesktopIcon && StoreBridge.hasDesktopIcon(root.iconName)) ? ("image://xdgicon/" + root.iconName) : ""
                 }
 
                 Text {
@@ -152,7 +159,7 @@ Rectangle {
                     visible: pkgIconImage.status !== Image.Ready
                     text: root.getCategoryGlyph(root.category)
                     font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
-                    font.pixelSize: 26
+                    font.pixelSize: 24
                     color: root.isAur ?
                         root.getToken("onTertiaryContainer", "#ffd8e4") :
                         root.getToken("onPrimaryContainer", "#eaddff")
@@ -171,7 +178,7 @@ Rectangle {
                     Text {
                         text: root.displayName && root.displayName.length > 0 ? root.displayName : root.pkgName
                         font.family: root.getToken("fontFamily", "Google Sans Flex")
-                        font.pixelSize: 15
+                        font.pixelSize: 14
                         font.weight: Font.DemiBold
                         color: root.getToken("onSurface", "#e6e1e1")
                         elide: Text.ElideRight
@@ -180,7 +187,7 @@ Rectangle {
 
                     // Badge de Repositório (core, extra, multilib, aur)
                     Rectangle {
-                        implicitWidth: repoText.implicitWidth + 10
+                        implicitWidth: repoText.implicitWidth + 8
                         height: 18
                         radius: root.getToken("radiusSmall", 8)
                         color: root.isAur ?
@@ -201,31 +208,77 @@ Rectangle {
                     }
                 }
 
-                RowLayout {
-                    spacing: 6
+                Text {
+                    Layout.fillWidth: true
+                    text: root.pkgName + (root.version && root.version.length > 0 ? " • " + root.version : "")
+                    font.family: root.getToken("monoFontFamily", "JetBrains Mono NF")
+                    font.pixelSize: 11
+                    color: root.getToken("onSurfaceVariant", "#cbc5ca")
+                    opacity: 0.8
+                    elide: Text.ElideRight
+                }
+            }
 
-                    Text {
-                        text: root.pkgName
-                        font.family: root.getToken("monoFontFamily", "JetBrains Mono NF")
-                        font.pixelSize: 11
-                        color: root.getToken("onSurfaceVariant", "#cbc5ca")
-                        opacity: 0.8
-                        elide: Text.ElideRight
-                    }
+            // Botão de Favorito Discreto
+            Rectangle {
+                id: favButton
+                width: 28
+                height: 28
+                radius: 14
+                color: favMouseArea.containsMouse ?
+                    root.getToken("surfaceContainerHighest", "#363435") : "transparent"
 
-                    Text {
-                        text: "• " + root.version
-                        font.family: root.getToken("monoFontFamily", "JetBrains Mono NF")
-                        font.pixelSize: 10
-                        color: root.getToken("onSurfaceVariant", "#cbc5ca")
-                        opacity: 0.65
-                        elide: Text.ElideRight
+                Text {
+                    anchors.centerIn: parent
+                    text: root.isFavorite ? "favorite" : "favorite_border"
+                    font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                    font.pixelSize: 17
+                    color: root.isFavorite ?
+                        root.getToken("tertiary", "#efb8c8") :
+                        (favMouseArea.containsMouse ? root.getToken("onSurface", "#e6e1e1") : root.getToken("onSurfaceVariant", "#cbc5ca"))
+                }
+
+                MouseArea {
+                    id: favMouseArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        root.favoriteToggled(root.pkgName);
+                        if (typeof StoreBridge !== "undefined" && StoreBridge && StoreBridge.toggleFavorite) {
+                            StoreBridge.toggleFavorite(root.pkgName);
+                        }
                     }
                 }
             }
         }
 
-        // 2. Resumo / Descrição (2 linhas com elide)
+        // 2. Linha/Badge Sutil de Proveniência / Justificativa de Recomendação
+        RowLayout {
+            Layout.fillWidth: true
+            visible: root.provenanceLabel && root.provenanceLabel.length > 0
+            spacing: 5
+
+            Text {
+                text: "auto_awesome"
+                font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                font.pixelSize: 12
+                color: root.getToken("primary", "#d0bcff")
+            }
+
+            Text {
+                text: root.provenanceLabel
+                font.family: root.getToken("fontFamily", "Google Sans Flex")
+                font.pixelSize: 10
+                font.weight: Font.Medium
+                color: root.getToken("onSurfaceVariant", "#cbc5ca")
+                opacity: 0.9
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+            }
+        }
+
+        // 3. Resumo / Descrição (2 linhas com elide)
         Text {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -239,36 +292,57 @@ Rectangle {
             lineHeight: 1.25
         }
 
-        // 3. Rodapé do Card: Votos/Status + Botão de Ação Rápida
+        // 4. Rodapé do Card: Popularidade + Estado (Instalado / Disponível) + Botão de Ação Rápida
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
 
-            // Votos AUR se for do AUR
+            // Rótulo confiável de Popularidade (pkgstats ou AUR)
             RowLayout {
-                visible: root.isAur
+                visible: root.popularityLabel && root.popularityLabel.length > 0
+                spacing: 4
+
+                Text {
+                    text: root.isAur ? "thumb_up" : "analytics"
+                    font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                    font.pixelSize: 13
+                    color: root.isAur ? root.getToken("tertiary", "#efb8c8") : root.getToken("primary", "#d0bcff")
+                }
+
+                Text {
+                    text: root.popularityLabel
+                    font.family: root.getToken("monoFontFamily", "JetBrains Mono NF")
+                    font.pixelSize: 10
+                    color: root.getToken("onSurfaceVariant", "#cbc5ca")
+                    elide: Text.ElideRight
+                }
+            }
+
+            // Fallback de Votos AUR se não tiver popularityLabel
+            RowLayout {
+                visible: root.isAur && (!root.popularityLabel || root.popularityLabel.length === 0)
                 spacing: 4
 
                 Text {
                     text: "thumb_up"
                     font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
-                    font.pixelSize: 14
+                    font.pixelSize: 13
                     color: root.getToken("tertiary", "#efb8c8")
                 }
 
                 Text {
                     text: root.votes.toString()
                     font.family: root.getToken("monoFontFamily", "JetBrains Mono NF")
-                    font.pixelSize: 11
+                    font.pixelSize: 10
                     color: root.getToken("onSurfaceVariant", "#cbc5ca")
                 }
             }
 
-            // Badge de Estado: "Instalado" ou "Atualização"
+            // Badge de Estado: "Instalado" (ou "Atualização") se instalado, ou "Disponível" se não instalado
             Rectangle {
                 visible: root.installed
-                implicitWidth: statusText.implicitWidth + 14
-                height: 22
+                implicitWidth: statusText.implicitWidth + 12
+                height: 20
                 radius: root.getToken("radiusFull", 9999)
                 color: root.updateAvailable ?
                     root.getToken("warningContainer", "#594800") :
@@ -282,7 +356,7 @@ Rectangle {
                     Text {
                         text: root.updateAvailable ? "upgrade" : "check_circle"
                         font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
-                        font.pixelSize: 13
+                        font.pixelSize: 12
                         color: root.updateAvailable ?
                             root.getToken("warning", "#fbc02d") :
                             root.getToken("success", "#b5ccba")
@@ -291,7 +365,7 @@ Rectangle {
                     Text {
                         text: root.updateAvailable ? "Atualização" : "Instalado"
                         font.family: root.getToken("fontFamily", "Google Sans Flex")
-                        font.pixelSize: 11
+                        font.pixelSize: 10
                         font.weight: Font.Medium
                         color: root.updateAvailable ?
                             root.getToken("onWarningContainer", "#ffe082") :
@@ -300,15 +374,47 @@ Rectangle {
                 }
             }
 
+            Rectangle {
+                visible: !root.installed
+                implicitWidth: dispText.implicitWidth + 12
+                height: 20
+                radius: root.getToken("radiusFull", 9999)
+                color: root.getToken("surfaceContainerHighest", "#363435")
+                border.width: 1
+                border.color: root.getToken("outlineVariant", "#49454f")
+
+                RowLayout {
+                    id: dispText
+                    anchors.centerIn: parent
+                    spacing: 4
+
+                    Text {
+                        text: "radio_button_unchecked"
+                        font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                        font.pixelSize: 10
+                        color: root.getToken("onSurfaceVariant", "#cbc5ca")
+                        opacity: 0.7
+                    }
+
+                    Text {
+                        text: "Disponível"
+                        font.family: root.getToken("fontFamily", "Google Sans Flex")
+                        font.pixelSize: 10
+                        font.weight: Font.Normal
+                        color: root.getToken("onSurfaceVariant", "#cbc5ca")
+                    }
+                }
+            }
+
             Item {
                 Layout.fillWidth: true
             }
 
-            // Botão Rápido de Ação (Instalar / Atualizar / Remover)
+            // Botão Rápido de Ação (Instalar / Atualizar / Desinstalar)
             Rectangle {
                 id: actionButton
-                implicitWidth: actionRow.implicitWidth + 20
-                height: 32
+                implicitWidth: actionRow.implicitWidth + 18
+                height: 30
                 radius: root.getToken("radiusFull", 9999)
 
                 readonly property bool btnHovered: actionMouseArea.containsMouse
@@ -356,7 +462,7 @@ Rectangle {
                             return "download";
                         }
                         font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
-                        font.pixelSize: 15
+                        font.pixelSize: 14
                         color: {
                             if (actionButton.actionType === "remove") return root.getToken("error", "#f2b8b5");
                             if (actionButton.actionType === "update") return root.getToken("onPrimaryContainer", "#eaddff");

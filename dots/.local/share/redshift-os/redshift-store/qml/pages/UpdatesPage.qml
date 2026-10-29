@@ -82,14 +82,21 @@ Rectangle {
                                       root.storeBridge.updatesModel.count : 0
     readonly property int effectiveCount: root.updatesCount > 0 ? root.updatesCount : root.modelCount
 
+    readonly property string lastOutcome: (root.storeBridge && root.storeBridge.lastUpdateOutcome) ?
+                                          root.storeBridge.lastUpdateOutcome : ""
+    readonly property string lastSummary: (root.storeBridge && root.storeBridge.lastUpdateSummary) ?
+                                          root.storeBridge.lastUpdateSummary : ""
+
     color: getToken("surface", "#141313")
 
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 16
-        spacing: 16
+        spacing: 14
 
+        // =====================================================================
         // 1. Cabeçalho da Central de Atualizações (Microsoft Store Style)
+        // =====================================================================
         RowLayout {
             Layout.fillWidth: true
             spacing: 16
@@ -109,7 +116,7 @@ Rectangle {
                         color: root.getToken("onSurface", "#e6e1e1")
                     }
 
-                    // Badge de contagem
+                    // Badge de contagem de atualizações
                     Rectangle {
                         visible: root.effectiveCount > 0
                         implicitWidth: updatesBadgeText.implicitWidth + 12
@@ -131,13 +138,17 @@ Rectangle {
                     }
                 }
 
+                // Subtítulo explicitando a política anti-partial upgrade do Arch Linux
                 Text {
                     text: root.effectiveCount > 0 ?
-                        (root.effectiveCount + " pacote(s) com atualizações disponíveis para download e compilação.") :
-                        "Todos os pacotes estão sincronizados com os espelhos oficiais e AUR."
+                        ("Atualizar Tudo executa yay -Syu (sincronizando pacotes oficiais e comunitários AUR simultaneamente). Para evitar inconsistências no Arch Linux, pacotes oficiais são atualizados de forma sincronizada com os espelhos.") :
+                        "Todos os pacotes estão sincronizados com os espelhos oficiais do Arch Linux e AUR."
                     font.family: root.getToken("fontFamily", "Google Sans Flex")
                     font.pixelSize: 12
                     color: root.getToken("onSurfaceVariant", "#cbc5ca")
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                    lineHeight: 1.25
                 }
             }
 
@@ -191,7 +202,7 @@ Rectangle {
                 }
             }
 
-            // Botão "Atualizar Tudo" (Destaque Principal)
+            // Botão Principal "Atualizar Tudo (yay -Syu)"
             Rectangle {
                 visible: root.effectiveCount > 0
                 implicitWidth: updateAllRow.implicitWidth + 24
@@ -219,7 +230,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "Atualizar Tudo"
+                        text: "Atualizar Tudo (yay -Syu)"
                         font.family: root.getToken("fontFamily", "Google Sans Flex")
                         font.pixelSize: 12
                         font.weight: Font.Bold
@@ -240,6 +251,90 @@ Rectangle {
             }
         }
 
+        // =====================================================================
+        // 2. Banner de Resultado da Última Transação (Seção 3.6)
+        // =====================================================================
+        Rectangle {
+            visible: root.lastOutcome.length > 0
+            Layout.fillWidth: true
+            implicitHeight: outcomeRow.implicitHeight + 20
+            radius: root.getToken("radiusNormal", 14)
+            color: {
+                if (root.lastOutcome === "complete") return root.getToken("successContainer", "#374b3e");
+                if (root.lastOutcome === "partial") return root.getToken("warningContainer", "#594800");
+                if (root.lastOutcome === "failed") return root.getToken("errorContainer", "#8c1d18");
+                return root.getToken("surfaceContainerHighest", "#363435");
+            }
+            border.width: 1
+            border.color: {
+                if (root.lastOutcome === "complete") return root.getToken("success", "#b5ccba");
+                if (root.lastOutcome === "partial") return root.getToken("warning", "#fbc02d");
+                if (root.lastOutcome === "failed") return root.getToken("error", "#f2b8b5");
+                return root.getToken("outlineVariant", "#49454f");
+            }
+
+            RowLayout {
+                id: outcomeRow
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 12
+
+                Text {
+                    text: {
+                        if (root.lastOutcome === "complete") return "verified";
+                        if (root.lastOutcome === "partial") return "warning";
+                        if (root.lastOutcome === "failed") return "error";
+                        return "cancel";
+                    }
+                    font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                    font.pixelSize: 22
+                    color: {
+                        if (root.lastOutcome === "complete") return root.getToken("success", "#b5ccba");
+                        if (root.lastOutcome === "partial") return root.getToken("warning", "#fbc02d");
+                        if (root.lastOutcome === "failed") return root.getToken("error", "#f2b8b5");
+                        return root.getToken("onSurfaceVariant", "#cbc5ca");
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+
+                    Text {
+                        text: {
+                            if (root.lastOutcome === "complete") return "Transação de Atualização Concluída com Sucesso";
+                            if (root.lastOutcome === "partial") return "Atualização Parcial ou com Alertas de Pacotes";
+                            if (root.lastOutcome === "failed") return "Falha na Transação de Atualização";
+                            return "Operação de Atualização Cancelada";
+                        }
+                        font.family: root.getToken("fontFamily", "Google Sans Flex")
+                        font.pixelSize: 13
+                        font.weight: Font.Bold
+                        color: {
+                            if (root.lastOutcome === "complete") return root.getToken("onSuccessContainer", "#d1e9d6");
+                            if (root.lastOutcome === "partial") return root.getToken("onWarningContainer", "#ffe082");
+                            if (root.lastOutcome === "failed") return root.getToken("onErrorContainer", "#f9dedc");
+                            return root.getToken("onSurface", "#e6e1e1");
+                        }
+                    }
+
+                    Text {
+                        text: root.lastSummary.length > 0 ? root.lastSummary : "O estado dos pacotes foi registrado no histórico do sistema."
+                        font.family: root.getToken("fontFamily", "Google Sans Flex")
+                        font.pixelSize: 11
+                        color: {
+                            if (root.lastOutcome === "complete") return root.getToken("onSuccessContainer", "#d1e9d6");
+                            if (root.lastOutcome === "partial") return root.getToken("onWarningContainer", "#ffe082");
+                            if (root.lastOutcome === "failed") return root.getToken("onErrorContainer", "#f9dedc");
+                            return root.getToken("onSurfaceVariant", "#cbc5ca");
+                        }
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                }
+            }
+        }
+
         // Divisor
         Rectangle {
             Layout.fillWidth: true
@@ -248,7 +343,9 @@ Rectangle {
             opacity: 0.25
         }
 
-        // 2. Área Central: Lista de Atualizações ou Estado 100% Atualizado
+        // =====================================================================
+        // 3. Área Central: Lista de Atualizações ou Estado 100% Atualizado
+        // =====================================================================
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -272,7 +369,7 @@ Rectangle {
                 delegate: Rectangle {
                     id: updateItemCard
                     width: updatesListView.width
-                    height: 72
+                    height: 74
                     radius: root.getToken("radiusNormal", 14)
                     color: itemMouse.containsMouse ?
                         root.getToken("surfaceContainerHigh", "#2b2a2a") :
@@ -421,7 +518,7 @@ Rectangle {
                                 }
 
                                 Text {
-                                    text: "Atualizar"
+                                    text: !updateItemCard.isAur ? "Atualizar Sistema (Syu)" : "Atualizar Pacote AUR"
                                     font.family: root.getToken("fontFamily", "Google Sans Flex")
                                     font.pixelSize: 11
                                     font.weight: Font.DemiBold

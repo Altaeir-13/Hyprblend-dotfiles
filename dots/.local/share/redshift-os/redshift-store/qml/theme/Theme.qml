@@ -117,6 +117,8 @@ QtObject {
     readonly property color successContainer: _color("successContainer", "#374b3e", "#b7f1be")
     readonly property color warning: _color("warning", "#ffb951", "#825500")
     readonly property color warningContainer: _color("warningContainer", "#643f00", "#ffddb4")
+    readonly property color info: _color("info", "#82cfff", "#0061a4")
+    readonly property color infoContainer: _color("infoContainer", "#00497d", "#d1e4ff")
 
     // Elevation & Decorators
     readonly property color shadow: _color("shadow", "#000000", "#000000")
@@ -155,6 +157,9 @@ QtObject {
     readonly property color on_warning: _color("on_warning", "#452b00", "#ffffff")
     readonly property color on_warning_container: _color("on_warning_container", "#ffddb4", "#2a1700")
 
+    readonly property color on_info: _color("on_info", "#003258", "#ffffff")
+    readonly property color on_info_container: _color("on_info_container", "#d1e4ff", "#001d36")
+
     readonly property color inverse_on_surface: _color("inverse_on_surface", "#313036", "#f5eff4")
 
     // -----------------------------------------------------------------------
@@ -189,6 +194,9 @@ QtObject {
     readonly property color m3onWarning: on_warning
     readonly property color m3onWarningContainer: on_warning_container
 
+    readonly property color m3onInfo: on_info
+    readonly property color m3onInfoContainer: on_info_container
+
     readonly property color m3inverseOnSurface: inverse_on_surface
 
     // -----------------------------------------------------------------------
@@ -222,6 +230,7 @@ QtObject {
     readonly property color error_container: errorContainer
     readonly property color success_container: successContainer
     readonly property color warning_container: warningContainer
+    readonly property color info_container: infoContainer
     readonly property color surface_tint: surfaceTint
 
     // -----------------------------------------------------------------------
