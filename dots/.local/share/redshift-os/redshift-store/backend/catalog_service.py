@@ -3884,12 +3884,12 @@ class CatalogService:
         status = "ready"
         message = ""
         if total == 0:
-            if self._unsynced_repos:
-                status = "unsynced_repos"
-                message = "Repositórios do Arch Linux não sincronizados. Execute 'yay -Sy'."
-            elif self.last_network_error and source_filter == "aur":
+            if self.last_network_error and (source_filter == "aur" or not self._unsynced_repos):
                 status = "network_error"
                 message = "Não foi possível conectar aos servidores do AUR."
+            elif self._unsynced_repos and source_filter in ("all", "official"):
+                status = "unsynced_repos"
+                message = "Repositórios do Arch Linux não sincronizados. Execute 'yay -Sy'."
             elif category_filter != "all":
                 status = "empty_category"
                 message = f"Nenhum pacote encontrado na categoria '{category_filter}'."
