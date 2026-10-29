@@ -512,6 +512,8 @@ class TestThemeService(unittest.TestCase):
 
                 self.assertTrue(theme.isDark)
                 self.assertEqual(theme.schemeVariant, "scheme-tonal-spot")
+                self.assertEqual(theme.variant, "scheme-tonal-spot")
+                self.assertEqual(theme.frontend, "caelestia")
                 self.assertEqual(theme.activeShellMode, "caelestia")
                 self.assertEqual(theme.wallpaperPath, "/usr/share/backgrounds/redshift.png")
 
@@ -524,12 +526,12 @@ class TestThemeService(unittest.TestCase):
                 self.assertIn("success", colors)
                 self.assertIn("warning", colors)
 
-                # Test preview toggle (Dark -> Light -> Dark restored)
+                # Test absence of local override: togglePreviewMode and toggleColorScheme are no-ops
                 self.assertTrue(theme.isDark)
                 theme.togglePreviewMode()
-                self.assertFalse(theme.isDark, "Expected light mode preview on first toggle")
-                theme.togglePreviewMode()
-                self.assertTrue(theme.isDark, "Expected original dark mode restored on second toggle")
+                self.assertTrue(theme.isDark, "Expected dark mode preserved; local preview toggle must be no-op")
+                theme.toggleColorScheme()
+                self.assertTrue(theme.isDark, "Expected dark mode preserved; local color scheme toggle must be no-op")
 
                 # Test atomic file replacement
                 updated_colors = {
@@ -543,6 +545,9 @@ class TestThemeService(unittest.TestCase):
 
                 theme.reloadTheme()
                 self.assertFalse(theme.isDark, "Expected light mode detected from new background hex")
+                # Even in light mode, local toggle must remain a no-op
+                theme.togglePreviewMode()
+                self.assertFalse(theme.isDark, "Expected light mode preserved; local preview toggle must be no-op")
 
     def test_caelestia_and_end4_priority_and_low_contrast_guard(self) -> None:
         """Verify H-MAT1 dynamic priority between colors.json and scheme.json, and WCAG low-contrast protection."""
@@ -1402,7 +1407,9 @@ class TestRedshiftMaintenanceIntegration(unittest.TestCase):
             cael_cfg = fake_home / ".config" / "quickshell" / "caelestia-hybrid"
             cael_cfg.mkdir(parents=True)
 
-            with patch("pathlib.Path.home", return_value=fake_home), patch.dict(
+            with patch("pathlib.Path.home", return_value=fake_home), patch.object(
+                MaintenanceService, "_find_doctor_binary", return_value=None
+            ), patch.dict(
                 os.environ, {"CAELESTIA_QML_PATH": str(tmp / "empty_qml")}, clear=False
             ):
                 # 1. Level 1: Caelestia plugin missing

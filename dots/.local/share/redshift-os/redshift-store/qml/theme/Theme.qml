@@ -30,8 +30,10 @@ QtObject {
 
     readonly property bool isDark: (bridge && typeof bridge.isDark !== "undefined") ? bridge.isDark : true
     readonly property string schemeVariant: (bridge && bridge.schemeVariant) ? bridge.schemeVariant : "scheme-tonal-spot"
+    readonly property string variant: (bridge && bridge.variant) ? bridge.variant : schemeVariant
     readonly property string wallpaperPath: (bridge && bridge.wallpaperPath) ? bridge.wallpaperPath : ""
     readonly property string frontendMode: (bridge && bridge.frontendMode) ? bridge.frontendMode : (bridge && bridge.activeShellMode) ? bridge.activeShellMode : "end4"
+    readonly property string frontend: (bridge && bridge.frontend) ? bridge.frontend : frontendMode
     readonly property string activeShellMode: frontendMode
 
     // Safe color resolution helper
