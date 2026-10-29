@@ -8,12 +8,16 @@ StoreController bridge for Redshift OS.
 from __future__ import annotations
 
 from .catalog_service import (
+    AUR_DISCOVERY_CANDIDATES,
     CANONICAL_CATEGORIES,
     FEATURED_PACKAGES_METADATA,
+    KNOWN_APPLICATIONS_CATALOG,
+    PKGSTATS_BASELINE,
     CatalogService,
     format_size,
     infer_category_and_icon,
     is_mock_mode,
+    is_user_application,
     normalize_category,
 )
 from .models import (
@@ -47,12 +51,15 @@ from .theme_service import ThemeService
 from .transaction_service import TransactionService
 
 __all__ = [
+    "AUR_DISCOVERY_CANDIDATES",
     "CANONICAL_CATEGORIES",
     "CatalogService",
     "DEFAULT_PACMAN_LOCK_PATH",
     "FEATURED_PACKAGES_METADATA",
+    "KNOWN_APPLICATIONS_CATALOG",
     "PACKAGE_NAME_PATTERN",
     "PACKAGE_NAME_RE",
+    "PKGSTATS_BASELINE",
     "PROTECTED_PACKAGES",
     "PackageItem",
     "PackageListModel",
@@ -77,6 +84,7 @@ __all__ = [
     "is_pacman_locked",
     "is_polkit_agent_running",
     "is_protected_package",
+    "is_user_application",
     "normalize_category",
     "validate_package_name",
 ]
