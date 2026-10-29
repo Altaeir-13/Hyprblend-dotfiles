@@ -473,7 +473,9 @@ Rectangle {
 
                     Text {
                         text: {
-                            if (actionButton.actionType === "update") return "Atualizar";
+                            if (actionButton.actionType === "update") {
+                                return !root.isAur ? "Atualizar Sistema (Syu)" : "Atualizar Pacote AUR";
+                            }
                             if (actionButton.actionType === "remove") return "Desinstalar";
                             if (actionButton.actionType === "installed") return "Instalado";
                             return "Instalar";
@@ -498,7 +500,11 @@ Rectangle {
                     enabled: !root.isBusy
                     onClicked: {
                         if (actionButton.actionType === "update") {
-                            root.actionTriggered("update", root.pkgName, root.repository);
+                            if (!root.isAur) {
+                                confirmUpgradeDialog.openDialog(root.pkgName, root.repository);
+                            } else {
+                                root.actionTriggered("update", root.pkgName, root.repository);
+                            }
                         } else if (actionButton.actionType === "remove") {
                             root.actionTriggered("remove", root.pkgName, root.repository);
                         } else if (actionButton.actionType === "install") {
@@ -518,5 +524,14 @@ Rectangle {
         cursorShape: Qt.PointingHandCursor
         z: -1
         onClicked: root.clicked()
+    }
+
+    // Diálogo Explicativo de Confirmação de Atualização Completa do Sistema
+    ConfirmSystemUpgradeDialog {
+        id: confirmUpgradeDialog
+        theme: root.theme
+        onConfirmed: (pkgName, repo) => {
+            root.actionTriggered("update", pkgName, repo);
+        }
     }
 }

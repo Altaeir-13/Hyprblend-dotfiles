@@ -103,22 +103,6 @@ ApplicationWindow {
 
             onPageSelected: (pageId) => root.navigateToPage(pageId)
             onToggleLogsRequested: logDrawer.isOpen = !logDrawer.isOpen
-            onThemeToggleRequested: {
-                if (root.themeSvc && root.themeSvc.togglePreviewMode) {
-                    root.themeSvc.togglePreviewMode();
-                } else if (root.store && root.store.togglePreviewMode) {
-                    root.store.togglePreviewMode();
-                }
-            }
-            onReloadThemeRequested: {
-                if (root.themeSvc) {
-                    if (root.themeSvc.reloadPalette) root.themeSvc.reloadPalette();
-                    else if (root.themeSvc.reloadTheme) root.themeSvc.reloadTheme();
-                } else if (root.store) {
-                    if (root.store.reloadPalette) root.store.reloadPalette();
-                    else if (root.store.reloadTheme) root.store.reloadTheme();
-                }
-            }
         }
 
         // 2. Coluna Principal de Conteúdo

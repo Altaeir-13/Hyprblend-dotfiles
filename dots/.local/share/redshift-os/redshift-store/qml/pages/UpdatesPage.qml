@@ -87,6 +87,9 @@ Rectangle {
     readonly property string lastSummary: (root.storeBridge && root.storeBridge.lastUpdateSummary) ?
                                           root.storeBridge.lastUpdateSummary : ""
 
+    property bool bannerDismissed: false
+    onLastOutcomeChanged: bannerDismissed = false
+
     color: getToken("surface", "#141313")
 
     ColumnLayout {
@@ -252,24 +255,34 @@ Rectangle {
         }
 
         // =====================================================================
-        // 2. Banner de Resultado da Última Transação (Seção 3.6)
+        // 2. Banner de Resultado da Última Transação (Pós-verificação)
         // =====================================================================
         Rectangle {
-            visible: root.lastOutcome.length > 0
+            id: outcomeBanner
+            objectName: "outcomeBanner"
+            readonly property bool isUnchanged: root.lastOutcome === "unchanged" || root.lastOutcome === "divergent_db"
+            readonly property bool isComplete: root.lastOutcome === "complete"
+            readonly property bool isPartial: root.lastOutcome === "partial"
+            readonly property bool isFailed: root.lastOutcome === "failed"
+            readonly property bool isCancelled: root.lastOutcome === "cancelled"
+
+            visible: root.lastOutcome.length > 0 && !root.bannerDismissed
             Layout.fillWidth: true
             implicitHeight: outcomeRow.implicitHeight + 20
             radius: root.getToken("radiusNormal", 14)
             color: {
-                if (root.lastOutcome === "complete") return root.getToken("successContainer", "#374b3e");
-                if (root.lastOutcome === "partial") return root.getToken("warningContainer", "#594800");
-                if (root.lastOutcome === "failed") return root.getToken("errorContainer", "#8c1d18");
+                if (isComplete) return root.getToken("successContainer", "#374b3e");
+                if (isUnchanged) return root.getToken("secondaryContainer", "#4a4458");
+                if (isPartial) return root.getToken("warningContainer", "#594800");
+                if (isFailed) return root.getToken("errorContainer", "#8c1d18");
                 return root.getToken("surfaceContainerHighest", "#363435");
             }
             border.width: 1
             border.color: {
-                if (root.lastOutcome === "complete") return root.getToken("success", "#b5ccba");
-                if (root.lastOutcome === "partial") return root.getToken("warning", "#fbc02d");
-                if (root.lastOutcome === "failed") return root.getToken("error", "#f2b8b5");
+                if (isComplete) return root.getToken("success", "#b5ccba");
+                if (isUnchanged) return root.getToken("secondary", "#ccc2dc");
+                if (isPartial) return root.getToken("warning", "#fbc02d");
+                if (isFailed) return root.getToken("error", "#f2b8b5");
                 return root.getToken("outlineVariant", "#49454f");
             }
 
@@ -281,17 +294,19 @@ Rectangle {
 
                 Text {
                     text: {
-                        if (root.lastOutcome === "complete") return "verified";
-                        if (root.lastOutcome === "partial") return "warning";
-                        if (root.lastOutcome === "failed") return "error";
+                        if (outcomeBanner.isComplete) return "verified";
+                        if (outcomeBanner.isUnchanged) return "info";
+                        if (outcomeBanner.isPartial) return "warning";
+                        if (outcomeBanner.isFailed) return "error";
                         return "cancel";
                     }
                     font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
                     font.pixelSize: 22
                     color: {
-                        if (root.lastOutcome === "complete") return root.getToken("success", "#b5ccba");
-                        if (root.lastOutcome === "partial") return root.getToken("warning", "#fbc02d");
-                        if (root.lastOutcome === "failed") return root.getToken("error", "#f2b8b5");
+                        if (outcomeBanner.isComplete) return root.getToken("success", "#b5ccba");
+                        if (outcomeBanner.isUnchanged) return root.getToken("secondary", "#ccc2dc");
+                        if (outcomeBanner.isPartial) return root.getToken("warning", "#fbc02d");
+                        if (outcomeBanner.isFailed) return root.getToken("error", "#f2b8b5");
                         return root.getToken("onSurfaceVariant", "#cbc5ca");
                     }
                 }
@@ -302,34 +317,67 @@ Rectangle {
 
                     Text {
                         text: {
-                            if (root.lastOutcome === "complete") return "Transação de Atualização Concluída com Sucesso";
-                            if (root.lastOutcome === "partial") return "Atualização Parcial ou com Alertas de Pacotes";
-                            if (root.lastOutcome === "failed") return "Falha na Transação de Atualização";
-                            return "Operação de Atualização Cancelada";
+                            if (outcomeBanner.isComplete) return "Atualização do sistema concluída com êxito.";
+                            if (outcomeBanner.isUnchanged) return "Nenhuma alteração realizada no pacote";
+                            if (outcomeBanner.isPartial) return "Atualização parcial realizada.";
+                            if (outcomeBanner.isFailed) return "Falha na atualização.";
+                            return "Operação cancelada pelo usuário.";
                         }
                         font.family: root.getToken("fontFamily", "Google Sans Flex")
                         font.pixelSize: 13
                         font.weight: Font.Bold
                         color: {
-                            if (root.lastOutcome === "complete") return root.getToken("onSuccessContainer", "#d1e9d6");
-                            if (root.lastOutcome === "partial") return root.getToken("onWarningContainer", "#ffe082");
-                            if (root.lastOutcome === "failed") return root.getToken("onErrorContainer", "#f9dedc");
+                            if (outcomeBanner.isComplete) return root.getToken("onSuccessContainer", "#d1e9d6");
+                            if (outcomeBanner.isUnchanged) return root.getToken("onSecondaryContainer", "#e8def8");
+                            if (outcomeBanner.isPartial) return root.getToken("onWarningContainer", "#ffe082");
+                            if (outcomeBanner.isFailed) return root.getToken("onErrorContainer", "#f9dedc");
                             return root.getToken("onSurface", "#e6e1e1");
                         }
                     }
 
                     Text {
-                        text: root.lastSummary.length > 0 ? root.lastSummary : "O estado dos pacotes foi registrado no histórico do sistema."
+                        text: {
+                            if (root.lastSummary.length > 0) return root.lastSummary;
+                            if (outcomeBanner.isComplete) return "Todas as atualizações do sistema foram aplicadas com sucesso e os pacotes estão sincronizados.";
+                            if (outcomeBanner.isUnchanged) return "Nenhuma alteração foi realizada no pacote e ele continua na versão anterior devido a sincronização pendente do banco local.";
+                            if (outcomeBanner.isPartial) return "Atualização parcial realizada. Alguns pacotes ainda requerem atenção.";
+                            if (outcomeBanner.isFailed) return "Falha no processo de atualização. Verifique o console de logs.";
+                            return "A operação foi interrompida pelo usuário antes da conclusão.";
+                        }
                         font.family: root.getToken("fontFamily", "Google Sans Flex")
                         font.pixelSize: 11
                         color: {
-                            if (root.lastOutcome === "complete") return root.getToken("onSuccessContainer", "#d1e9d6");
-                            if (root.lastOutcome === "partial") return root.getToken("onWarningContainer", "#ffe082");
-                            if (root.lastOutcome === "failed") return root.getToken("onErrorContainer", "#f9dedc");
+                            if (outcomeBanner.isComplete) return root.getToken("onSuccessContainer", "#d1e9d6");
+                            if (outcomeBanner.isUnchanged) return root.getToken("onSecondaryContainer", "#e8def8");
+                            if (outcomeBanner.isPartial) return root.getToken("onWarningContainer", "#ffe082");
+                            if (outcomeBanner.isFailed) return root.getToken("onErrorContainer", "#f9dedc");
                             return root.getToken("onSurfaceVariant", "#cbc5ca");
                         }
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
+                    }
+                }
+
+                Rectangle {
+                    width: 26
+                    height: 26
+                    radius: 13
+                    color: closeBannerMouse.containsMouse ? root.getToken("surfaceContainerHighest", "#363435") : "transparent"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "close"
+                        font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
+                        font.pixelSize: 16
+                        color: root.getToken("onSurfaceVariant", "#cbc5ca")
+                    }
+
+                    MouseArea {
+                        id: closeBannerMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.bannerDismissed = true
                     }
                 }
             }
@@ -534,7 +582,13 @@ Rectangle {
                                 hoverEnabled: !root.isBusy
                                 cursorShape: root.isBusy ? Qt.ForbiddenCursor : Qt.PointingHandCursor
                                 enabled: !root.isBusy
-                                onClicked: root.actionRequested("update", updateItemCard.pName, updateItemCard.repo)
+                                onClicked: {
+                                    if (!updateItemCard.isAur) {
+                                        confirmUpgradeDialog.openDialog(updateItemCard.pName, updateItemCard.repo);
+                                    } else {
+                                        root.actionRequested("update", updateItemCard.pName, updateItemCard.repo);
+                                    }
+                                }
                             }
                         }
                     }
@@ -603,6 +657,15 @@ Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    // Diálogo Explicativo de Confirmação de Atualização Completa do Sistema
+    ConfirmSystemUpgradeDialog {
+        id: confirmUpgradeDialog
+        theme: root.theme
+        onConfirmed: (pkgName, repo) => {
+            root.actionRequested("update", pkgName, repo);
         }
     }
 }

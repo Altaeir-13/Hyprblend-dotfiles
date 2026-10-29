@@ -480,7 +480,11 @@ Item {
                         enabled: !root.isBusy
                         onClicked: {
                             if (root.pkgData) {
-                                root.actionRequested("update", root.pkgData.name, root.pkgData.repository);
+                                if (!root.isAur) {
+                                    confirmUpgradeDialog.openDialog(root.pkgData.name, root.pkgData.repository);
+                                } else {
+                                    root.actionRequested("update", root.pkgData.name, root.pkgData.repository);
+                                }
                             }
                         }
                     }
@@ -917,6 +921,15 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    // Diálogo Explicativo de Confirmação de Atualização Completa do Sistema
+    ConfirmSystemUpgradeDialog {
+        id: confirmUpgradeDialog
+        theme: root.theme
+        onConfirmed: (pkgName, repo) => {
+            root.actionRequested("update", pkgName, repo);
         }
     }
 }

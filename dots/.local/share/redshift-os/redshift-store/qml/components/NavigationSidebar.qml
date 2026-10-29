@@ -17,8 +17,6 @@ Rectangle {
 
     signal pageSelected(string pageId)
     signal toggleLogsRequested()
-    signal reloadThemeRequested()
-    signal themeToggleRequested()
 
     // --- Helpers de Tema e Fallbacks M3 Expressive ---
     readonly property var defaultTheme: ({
@@ -344,31 +342,24 @@ Rectangle {
             }
         }
 
-        // 4. Card Compacto de Status Material You / Matugen
+        // 4. Card Compacto e Passivo de Status Material You / Matugen (Informativo)
         Rectangle {
             id: themeCard
             Layout.fillWidth: true
             height: 52
             radius: root.getToken("radiusNormal", 14)
-            color: themeCardMouseArea.containsMouse ?
-                root.getToken("surfaceContainerHigh", "#2b2a2a") :
-                root.getToken("surfaceContainerLowest", "#0f0e0e")
+            color: root.getToken("surfaceContainerLowest", "#0f0e0e")
             border.width: 1
             border.color: Qt.alpha(root.getToken("outlineVariant", "#49454f"), 0.5)
 
             Behavior on color { ColorAnimation { duration: 180 } }
 
-            MouseArea {
-                id: themeCardMouseArea
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.themeToggleRequested()
-            }
-
             RowLayout {
                 anchors.fill: parent
-                anchors.margins: 8
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                anchors.topMargin: 8
+                anchors.bottomMargin: 8
                 spacing: 10
 
                 // Ícone de paleta / modo
@@ -407,36 +398,6 @@ Rectangle {
                         font.pixelSize: 11
                         color: root.getToken("onSurfaceVariant", "#cbc5ca")
                         elide: Text.ElideRight
-                    }
-                }
-
-                // Botão de recarregar tema
-                Rectangle {
-                    width: 28
-                    height: 28
-                    radius: root.getToken("radiusSmall", 8)
-                    z: 10
-                    color: reloadMouseArea.containsMouse ?
-                        root.getToken("surfaceContainerHighest", "#363435") : "transparent"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "refresh"
-                        font.family: root.getToken("iconFontFamily", "Material Symbols Rounded")
-                        font.pixelSize: 18
-                        color: reloadMouseArea.containsMouse ?
-                            root.getToken("primary", "#d0bcff") : root.getToken("onSurfaceVariant", "#cbc5ca")
-                    }
-
-                    MouseArea {
-                        id: reloadMouseArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: (mouse) => {
-                            mouse.accepted = true;
-                            root.reloadThemeRequested();
-                        }
                     }
                 }
             }
