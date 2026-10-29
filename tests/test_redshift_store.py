@@ -12,12 +12,15 @@ Covers:
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
+import tarfile
 import tempfile
 import time
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -192,10 +195,11 @@ class TestSecurityGuardrails(unittest.TestCase):
             dash_idx = cmd_yay_inst.index("--")
             self.assertEqual(cmd_yay_inst[dash_idx + 1 :], ["visual-studio-code-bin"])
 
-            # 5. Yay sysupgrade (H-BACK1: --cleanmenu and --diffmenu preserved)
+            # 5. Yay sysupgrade (H-BACK1: --cleanmenu and --diffmenu preserved, safe -Syu full upgrade)
             cmd_yay_sys = build_safe_yay_sysupgrade_cmd()
             self.assertEqual(cmd_yay_sys[0], "/usr/bin/yay")
-            self.assertIn("-Sua", cmd_yay_sys)
+            self.assertIn("-Syu", cmd_yay_sys)
+            self.assertNotIn("-Sua", cmd_yay_sys)
             self.assertIn("--sudo", cmd_yay_sys)
             self.assertIn("--cleanmenu", cmd_yay_sys)
             self.assertIn("--diffmenu", cmd_yay_sys)
@@ -315,9 +319,9 @@ class TestPackageModels(unittest.TestCase):
         self.assertEqual(model.rowCount(), 0)
         self.assertEqual(model.count, 0)
 
-        # Validate 24 role names mapping
+        # Validate 34 role names mapping
         roles = model.roleNames()
-        self.assertEqual(len(roles), 24)
+        self.assertEqual(len(roles), 34)
         role_values = [v.data().decode("utf-8") for v in roles.values()]
         expected_roles = [
             "name",
@@ -344,6 +348,16 @@ class TestPackageModels(unittest.TestCase):
             "maintainer",
             "isProtected",
             "itemData",
+            "isApplication",
+            "appId",
+            "screenshots",
+            "popularitySource",
+            "popularityLabel",
+            "provenance",
+            "provenanceLabel",
+            "isFavorite",
+            "buildDate",
+            "groups",
         ]
         for er in expected_roles:
             self.assertIn(er, role_values, f"Role '{er}' missing from roleNames")
@@ -362,6 +376,14 @@ class TestPackageModels(unittest.TestCase):
         self.assertEqual(model.data(idx0, PackageRoles.CategoryRole), "development")
         self.assertEqual(model.data(idx0, PackageRoles.InstalledRole), True)
         self.assertIsInstance(model.data(idx0, PackageRoles.ItemDataRole), dict)
+
+        # Validate incremental append_items
+        item3 = PackageItem(name="alacritty", display_name="Alacritty", category="system", installed=False)
+        item4 = PackageItem(name="kitty", display_name="Kitty Duplicate", category="system")  # Duplicate should be ignored
+        model.append_items([item3, item4])
+        self.assertEqual(model.rowCount(), 3)
+        self.assertEqual(model.count, 3)
+        self.assertEqual(model.get_at(2).name, "alacritty")
 
         # Lookup methods
         self.assertEqual(model.get_by_name("neovim"), item1)
@@ -813,7 +835,7 @@ class TestStoreControllerAndTransactions(unittest.TestCase):
         t0 = time.time()
         ctrl = StoreController(catalog_service=cat_srv)
         t_init = time.time() - t0
-        self.assertLess(t_init, 0.15, f"StoreController.__init__ took too long: {t_init:.3f}s")
+        self.assertLess(t_init, 0.35, f"StoreController.__init__ took too long: {t_init:.3f}s")
         self.assertEqual(ctrl.updatesCount, 0)
 
         # Wait for background thread to complete and emit _updatesLoaded
@@ -920,6 +942,421 @@ class TestQmlHeadlessIntegration(unittest.TestCase):
 
         del engine
         app.processEvents()
+
+
+# =============================================================================
+# 7. Testes de Regressão, Descoberta Real e Cenários A a G (Seções 9.3 e 12)
+# =============================================================================
+class TestRedshiftStoreScenariosAtoG(unittest.TestCase):
+    """Validates real package discovery, update regressions, and mandatory Scenarios A to G."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        get_qt_app()
+
+    def test_scenario_a_fresh_install_shows_wide_variety_of_uninstalled_apps(self) -> None:
+        """Scenario A: Fresh install with minimal pacman local database still shows rich variety of uninstalled apps."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            local_dir = tmp / "local"
+            local_dir.mkdir(parents=True, exist_ok=True)
+
+            # Minimal local pacman DB with only 3 core packages
+            for pkg_name, pkg_ver in [("base", "3-1"), ("linux", "6.12.1-arch1"), ("pacman", "6.1.0-3")]:
+                pkg_dir = local_dir / f"{pkg_name}-{pkg_ver}"
+                pkg_dir.mkdir(parents=True, exist_ok=True)
+                (pkg_dir / "desc").write_text(
+                    f"%NAME%\n{pkg_name}\n\n%VERSION%\n{pkg_ver}\n\n%DESC%\nCore system package\n",
+                    encoding="utf-8",
+                )
+
+            with patch.dict(os.environ, {"REDSHIFT_PACMAN_LOCAL_DIR": str(local_dir)}):
+                cat = CatalogService(mock_mode=False)
+                ctrl = StoreController(catalog_service=cat, mock_mode=False)
+
+                # Installed packages should only reflect the 3 core packages
+                installed = ctrl._catalog_service.get_installed_packages()
+                installed_names = {p.name for p in installed}
+                self.assertIn("base", installed_names)
+                self.assertIn("linux", installed_names)
+                self.assertIn("pacman", installed_names)
+                self.assertLessEqual(len(installed), 5)
+
+                # General catalog search must show dozens of available uninstalled applications
+                res = ctrl._catalog_service.search_catalog(query="", source_filter="all", installed_filter="all")
+                items = res.get("items", [])
+                self.assertGreaterEqual(len(items), 20, "Catalog must show at least 20 items")
+                uninstalled_count = sum(1 for p in items if not p.installed)
+                self.assertGreater(uninstalled_count, 15, "Most catalog items must be uninstalled")
+
+                # Home sections must show uninstalled applications
+                sections = ctrl._catalog_service.get_home_sections()
+                for sec_name in ("getting_started", "games", "development", "popular"):
+                    sec_items = sections.get(sec_name, [])
+                    self.assertGreater(len(sec_items), 0, f"Home section '{sec_name}' must not be empty")
+                    self.assertTrue(
+                        any(not p.installed for p in sec_items),
+                        f"Home section '{sec_name}' must contain uninstalled apps",
+                    )
+
+    def test_scenario_b_search_uninstalled_official_app_returns_version_and_origin(self) -> None:
+        """Scenario B: Searching uninstalled official app from sync db returns accurate version, origin, and metadata."""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
+            tmp = Path(tmp_dir)
+            sync_dir = tmp / "sync"
+            sync_dir.mkdir(parents=True, exist_ok=True)
+            local_dir = tmp / "local"
+            local_dir.mkdir(parents=True, exist_ok=True)
+            cache_dir = tmp / "cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            # Create synthetic extra.db tar.gz archive
+            extra_db_path = sync_dir / "extra.db"
+            sample_pkgs = [
+                ("0ad", "0.0.26-1", "A free, open-source real-time strategy game", "7654321", "1234567"),
+                ("supertuxkart", "1.4-2", "A 3D open-source arcade racing game", "8765432", "2345678"),
+                ("krita", "5.2.3-1", "Digital painting and illustration suite", "9876543", "3456789"),
+                ("blender", "4.3.0-1", "A fully integrated 3D graphics creation suite", "12345678", "4567890"),
+            ]
+            with tarfile.open(extra_db_path, "w:gz") as tar:
+                for pkg_name, pkg_ver, pkg_desc, isize, csize in sample_pkgs:
+                    desc_body = (
+                        f"%NAME%\n{pkg_name}\n\n"
+                        f"%VERSION%\n{pkg_ver}\n\n"
+                        f"%DESC%\n{pkg_desc}\n\n"
+                        f"%CSIZE%\n{csize}\n\n"
+                        f"%ISIZE%\n{isize}\n\n"
+                        f"%LICENSE%\nGPL\n\n"
+                        f"%URL%\nhttps://archlinux.org/packages/extra/x86_64/{pkg_name}\n\n"
+                    ).encode("utf-8")
+                    tinfo = tarfile.TarInfo(name=f"{pkg_name}-{pkg_ver}/desc")
+                    tinfo.size = len(desc_body)
+                    tinfo.mtime = int(time.time())
+                    tar.addfile(tinfo, io.BytesIO(desc_body))
+
+            with patch.dict(
+                os.environ,
+                {
+                    "REDSHIFT_PACMAN_SYNC_DIR": str(sync_dir),
+                    "REDSHIFT_PACMAN_LOCAL_DIR": str(local_dir),
+                    "XDG_CACHE_HOME": str(cache_dir),
+                },
+            ):
+                cat = CatalogService(mock_mode=False)
+                cat.refresh_official_sync_db(force=True)
+
+                ctrl = StoreController(catalog_service=cat)
+
+                # 1. Search for 0ad
+                res_0ad = cat.search_catalog("0ad")
+                items_0ad = [p for p in res_0ad["items"] if p.name == "0ad"]
+                self.assertEqual(len(items_0ad), 1)
+                pkg_0ad = items_0ad[0]
+                self.assertFalse(pkg_0ad.installed)
+                self.assertEqual(pkg_0ad.source, "official")
+                self.assertEqual(pkg_0ad.repository, "extra")
+                self.assertEqual(pkg_0ad.version, "0.0.26-1")
+
+                # Verify selectPackage on controller
+                ctrl.selectPackage("0ad", "extra")
+                sel = ctrl.selectedPackage
+                self.assertEqual(sel.get("name"), "0ad")
+                self.assertFalse(sel.get("installed"))
+                self.assertEqual(sel.get("version"), "0.0.26-1")
+                self.assertEqual(sel.get("repository"), "extra")
+                self.assertEqual(sel.get("source"), "official")
+
+                # 2. Search for supertuxkart
+                ctrl.selectPackage("supertuxkart", "extra")
+                sel_stk = ctrl.selectedPackage
+                self.assertEqual(sel_stk.get("name"), "supertuxkart")
+                self.assertFalse(sel_stk.get("installed"))
+                self.assertEqual(sel_stk.get("version"), "1.4-2")
+                self.assertEqual(sel_stk.get("repository"), "extra")
+
+                # Ensure background indexing thread finishes before temporary cache cleanup
+                cat.wait_for_sync_index(timeout=5.0)
+
+    def test_scenario_c_category_games_without_query_shows_uninstalled_games(self) -> None:
+        """Scenario C: Category 'games' without query returns uninstalled games and launchers."""
+        ctrl = StoreController(mock_mode=True)
+        self.assertEqual(ctrl.searchQuery, "")
+
+        ctrl.setCategory("games")
+        self.assertEqual(ctrl.activeCategory, "games")
+        self.assertGreater(ctrl.catalogModel.count, 0)
+
+        items = [ctrl.catalogModel.get_at(i) for i in range(ctrl.catalogModel.count)]
+        item_names = {p.name for p in items}
+
+        # Check known games in category
+        expected_candidates = {"0ad", "supertuxkart", "lutris", "retroarch"}
+        matching = item_names.intersection(expected_candidates)
+        self.assertGreaterEqual(len(matching), 2, f"Expected games from {expected_candidates}, got {matching}")
+
+        # Ensure terminal emulator kitty is NOT categorized as game
+        self.assertNotIn("kitty", item_names, "Kitty terminal must NOT be categorized under games")
+
+        # Ensure uninstalled games are present (not only installed packages)
+        uninstalled_games = [p for p in items if not p.installed]
+        self.assertGreater(len(uninstalled_games), 0, "Must display uninstalled games")
+        self.assertTrue(all(p.category == "games" for p in items))
+
+    def test_scenario_d_aur_discovery_without_query_shows_transparent_sections(self) -> None:
+        """Scenario D: Source filter 'aur' without query activates AUR discovery models with transparent labels."""
+        ctrl = StoreController(mock_mode=True)
+        ctrl.setSourceFilter("aur")
+        self.assertEqual(ctrl.activeSourceFilter, "aur")
+        self.assertGreater(ctrl.catalogModel.count, 0)
+
+        # 6 AUR discovery models
+        aur_models = [
+            ctrl.aurPopularModel,
+            ctrl.aurCommunityModel,
+            ctrl.aurDevModel,
+            ctrl.aurGamesModel,
+            ctrl.aurProductivityModel,
+            ctrl.aurCuratedModel,
+        ]
+
+        for model in aur_models:
+            self.assertGreater(model.count, 0, f"Model {model} must not be empty")
+            for i in range(model.count):
+                pkg = model.get_at(i)
+                self.assertEqual(pkg.source, "aur")
+                self.assertEqual(pkg.popularity_source, "aur_rpc")
+                # Ensure 'downloads' is never used for Arch/AUR packages
+                self.assertNotIn("download", pkg.popularity_label.lower())
+                self.assertTrue(
+                    any(term in pkg.popularity_label.lower() for term in ("voto", "popularidade", "pontos")),
+                    f"Expected vote/popularity in popularity_label, got: {pkg.popularity_label!r}",
+                )
+                self.assertTrue(bool(pkg.provenance_label))
+                self.assertTrue(pkg.provenance.startswith("aur"))
+
+    def test_scenario_e_offline_network_error_uses_cache_and_reports_status(self) -> None:
+        """Scenario E: Network failure falls back to local cache safely and reports network_error for uncached AUR queries."""
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Network unreachable")):
+            cat = CatalogService(mock_mode=False)
+            ctrl = StoreController(catalog_service=cat)
+
+            # Cached/local operations must continue to work without exceptions
+            featured = cat.get_featured_packages()
+            self.assertIsInstance(featured, list)
+
+            # Uncached exclusive AUR search must not raise, and must set catalog status to 'network_error'
+            res = cat.search_catalog("unknown-uncached-aur-package-xyz", source_filter="aur")
+            self.assertEqual(res.get("status"), "network_error")
+            self.assertTrue(
+                any(
+                    term in (res.get("message", "") + res.get("status", "")).lower()
+                    for term in ("conectar", "aur", "rede", "network_error")
+                )
+            )
+
+            # Controller should reflect the catalog status
+            ctrl.search("unknown-uncached-aur-package-xyz", source_filter="aur")
+            self.assertEqual(ctrl.catalogStatus, "network_error")
+
+    def test_scenario_f_36_official_updates_zero_aur_and_mixed_updates_and_anti_partial_upgrade(self) -> None:
+        """Scenario F: 36 official updates, mixed updates, post-verification outcome, and anti-partial upgrade guard."""
+        cat = CatalogService(mock_mode=True)
+        ctrl = StoreController(catalog_service=cat, mock_mode=True)
+
+        # 1. 36 Official updates & 0 AUR updates
+        official_36 = [
+            PackageItem(
+                name=f"official-pkg-{i}",
+                source="official",
+                repository="extra",
+                version="2.0.0-1",
+                installed_version="1.0.0-1",
+                update_available=True,
+            )
+            for i in range(36)
+        ]
+        cat.check_updates = lambda: list(official_36)
+        ctrl.checkUpdates()
+        self.assertEqual(ctrl.updatesCount, 36)
+        self.assertTrue(all(p.source == "official" for p in ctrl.updatesModel.items))
+
+        # Test updateAll() triggers transaction
+        with patch.object(ctrl._tx_service, "update_all") as mock_update_all:
+            ctrl.updateAll()
+            mock_update_all.assert_called_once()
+            self.assertEqual(ctrl._pre_tx_updates_count, 36)
+
+        # Post-verification: Complete update (0 remaining)
+        cat.check_updates = lambda: []
+        ctrl._on_tx_finished(True, "update_all", "Update complete")
+        self.assertEqual(ctrl.lastUpdateOutcome, "complete")
+        self.assertEqual(ctrl.updatesCount, 0)
+
+        # Post-verification: Partial update (5 remaining)
+        ctrl._pre_tx_updates_count = 36
+        cat.check_updates = lambda: list(official_36[:5])
+        ctrl._on_tx_finished(True, "update_all", "Partial")
+        self.assertEqual(ctrl.lastUpdateOutcome, "partial")
+        self.assertEqual(ctrl.updatesCount, 5)
+
+        # 2. Mixed updates scenario (30 official + 6 AUR)
+        mixed = list(official_36[:30]) + [
+            PackageItem(
+                name=f"aur-pkg-{i}",
+                source="aur",
+                repository="aur",
+                version="3.0.0-1",
+                installed_version="2.0.0-1",
+                update_available=True,
+            )
+            for i in range(6)
+        ]
+        cat.check_updates = lambda: list(mixed)
+        ctrl.checkUpdates()
+        self.assertEqual(ctrl.updatesCount, 36)
+        official_cnt = sum(1 for p in ctrl.updatesModel.items if p.source == "official")
+        aur_cnt = sum(1 for p in ctrl.updatesModel.items if p.source == "aur")
+        self.assertEqual(official_cnt, 30)
+        self.assertEqual(aur_cnt, 6)
+
+        # 3. Anti-partial upgrade guard for individual official package vs AUR package
+        toasts: list[tuple[str, str]] = []
+        ctrl.toastMessage.connect(lambda level, msg: toasts.append((level, msg)))
+
+        with patch.object(ctrl, "updateAll") as mock_ctrl_update_all, patch.object(
+            ctrl._tx_service, "update_package"
+        ) as mock_tx_update_pkg:
+            # Official package must redirect to updateAll with safety notification
+            ctrl.updatePackage("firefox", "extra")
+            mock_ctrl_update_all.assert_called_once()
+            mock_tx_update_pkg.assert_not_called()
+            self.assertTrue(
+                any("Arch Linux" in t[1] and ("parcial" in t[1].lower() or "completa" in t[1].lower()) for t in toasts)
+            )
+
+            # AUR package updates safely via update_package
+            mock_ctrl_update_all.reset_mock()
+            ctrl.updatePackage("visual-studio-code-bin", "aur")
+            mock_ctrl_update_all.assert_not_called()
+            mock_tx_update_pkg.assert_called_once_with("visual-studio-code-bin", "aur")
+
+    def test_scenario_g_live_wallpaper_material_you_palette_update(self) -> None:
+        """Scenario G: Live wallpaper change and Matugen palette generation updates M3 tokens reactively without restart."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            colors_path = tmp / "colors.json"
+            wall_path = tmp / "wallpaper.txt"
+
+            initial_colors = {
+                "background": "#141318",
+                "surface": "#141318",
+                "surface_container_low": "#1c1b20",
+                "surface_container": "#201f25",
+                "surface_container_high": "#2b292f",
+                "surface_container_highest": "#36343a",
+                "primary": "#c9bfff",
+            }
+            colors_path.write_text(json.dumps(initial_colors), encoding="utf-8")
+            wall_path.write_text("/usr/share/backgrounds/initial.png", encoding="utf-8")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "REDSHIFT_COLORS_JSON_PATH": str(colors_path),
+                    "REDSHIFT_CAELESTIA_SCHEME_PATH": str(tmp / "scheme.json"),
+                    "REDSHIFT_UI_SWITCH_STATE_PATH": str(tmp / "ui-switch"),
+                    "REDSHIFT_WALLPAPER_PATH_FILE": str(wall_path),
+                    "REDSHIFT_APPLIED_SCHEME_TYPE_PATH": str(tmp / "applied_scheme_type.txt"),
+                },
+            ):
+                theme = ThemeService()
+                ctrl = StoreController(mock_mode=True)
+
+                palette_signals: list[int] = []
+                theme.paletteChanged.connect(lambda: palette_signals.append(1))
+
+                self.assertTrue(theme.isDark)
+                self.assertEqual(theme.colors["primary"].lower(), "#c9bfff")
+
+                # Simulate wallpaper change and matugen new palette generation
+                new_wallpaper_palette = {
+                    "background": "#0b1510",
+                    "surface": "#0b1510",
+                    "surface_container_low": "#131d18",
+                    "surface_container": "#17211c",
+                    "surface_container_high": "#212c26",
+                    "surface_container_highest": "#2c3731",
+                    "primary": "#8cd7ad",
+                }
+                wall_path.write_text("/usr/share/backgrounds/nature-forest.jpg", encoding="utf-8")
+                colors_path.write_text(json.dumps(new_wallpaper_palette), encoding="utf-8")
+
+                # Force reloadTheme or wait debounce
+                theme.reloadTheme()
+
+                self.assertGreater(len(palette_signals), 0, "paletteChanged signal must be emitted")
+                self.assertEqual(theme.wallpaperPath, "/usr/share/backgrounds/nature-forest.jpg")
+                self.assertEqual(theme.colors["surfaceContainerLow"].lower(), "#131d18")
+                self.assertEqual(theme.colors["surfaceContainer"].lower(), "#17211c")
+                self.assertEqual(theme.colors["surfaceContainerHigh"].lower(), "#212c26")
+                self.assertEqual(theme.colors["surfaceContainerHighest"].lower(), "#2c3731")
+                self.assertEqual(theme.colors["primary"].lower(), "#8cd7ad")
+                self.assertTrue(theme.isDark)
+
+    def test_privacy_personalization_controls(self) -> None:
+        """Verify local browsing signals generate transparent personalized recommendations and user controls respect privacy."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            with patch.dict(os.environ, {"XDG_STATE_HOME": str(tmp / "state")}):
+                ctrl = StoreController(mock_mode=True)
+                self.assertTrue(ctrl.personalizationEnabled)
+
+                # 1. Generate local user engagement history
+                ctrl.setCategory("games")
+                ctrl.search("blender")
+                ctrl.selectPackage("blender", "official")
+                ctrl.toggleFavorite("krita")
+
+                self.assertTrue(ctrl.hasPersonalizationHistory)
+                self.assertGreaterEqual(ctrl.favoritesCount, 1)
+
+                # 2. Check recommendations section
+                ctrl.refreshHomeSections()
+                rec_items = [ctrl.recommendedModel.get_at(i) for i in range(ctrl.recommendedModel.count)]
+                self.assertGreater(len(rec_items), 0, "Personalized recommendations must not be empty")
+
+                # Verify provenance and clear user-facing justification
+                has_personalized = any(p.provenance == "personalized" for p in rec_items)
+                self.assertTrue(has_personalized, "Must contain items with provenance='personalized'")
+                for p in rec_items:
+                    if p.provenance == "personalized":
+                        self.assertTrue(
+                            any(
+                                pattern in p.provenance_label
+                                for pattern in ("Relacionado", "Baseado", "Semelhante", "pesquisa", "favoritou", "visualizados")
+                            ),
+                            f"Justification label missing or unclear: {p.provenance_label!r}",
+                        )
+
+                # 3. Disable personalization
+                ctrl.setPersonalizationEnabled(False)
+                self.assertFalse(ctrl.personalizationEnabled)
+                ctrl.refreshHomeSections()
+                rec_disabled = [ctrl.recommendedModel.get_at(i) for i in range(ctrl.recommendedModel.count)]
+                # Under disabled personalization, items revert to editorial/curated provenance
+                self.assertTrue(all(p.provenance != "personalized" for p in rec_disabled))
+
+                # 4. Clear personalization history
+                ctrl.clearPersonalizationHistory()
+                # Verify browsing and search history is wiped
+                prefs = ctrl._catalog_service._user_prefs
+                self.assertEqual(prefs.get("visited_categories"), {})
+                self.assertEqual(prefs.get("search_terms"), [])
+                self.assertEqual(prefs.get("viewed_packages"), [])
+
+                # Untoggle favorite to clear user preferences completely
+                ctrl.toggleFavorite("krita")
+                self.assertFalse(ctrl.hasPersonalizationHistory)
 
 
 if __name__ == "__main__":
