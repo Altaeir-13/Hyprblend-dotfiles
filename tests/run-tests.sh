@@ -1440,8 +1440,10 @@ fi
         exit 7
     fi
 
-    # Validate with desktop-file-validate
-    desktop-file-validate "$desktop_file" || exit 8
+    # Validate with desktop-file-validate when installed on host/runner
+    if command -v desktop-file-validate >/dev/null 2>&1; then
+        desktop-file-validate "$desktop_file" || exit 8
+    fi
 
     # Verify Exec line resolution works even with reduced PATH="/usr/bin"
     sb_desktop="$(create_sandbox "desktop-exec-test")"
