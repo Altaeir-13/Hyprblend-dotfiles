@@ -1,0 +1,14 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = qt6-base
+Target = qt6-declarative
+Target = quickshell*
+Target = illogical-impulse-quickshell-git
+Target = illogical-impulse-caelestia-plugin
+
+[Action]
+Description = Checking Redshift OS runtime environment and setting doctor notification marker...
+When = PostTransaction
+Exec = /usr/bin/bash -c 'touch /tmp/.redshift-needs-doctor 2>/dev/null || true'

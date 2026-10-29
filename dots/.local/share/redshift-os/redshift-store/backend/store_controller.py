@@ -17,6 +17,7 @@ from PyQt6.QtCore import QObject, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon
 
 from .catalog_service import CatalogService
+from .maintenance_service import MaintenanceService
 from .models import PackageItem, PackageListModel
 from .transaction_service import TransactionService
 
@@ -85,6 +86,8 @@ class StoreController(QObject):
     promptChanged = pyqtSignal()
     personalizationChanged = pyqtSignal()
     toastMessage = pyqtSignal(str, str)  # (level: "info"|"success"|"warning"|"error", message: str)
+    maintenanceStatusChanged = pyqtSignal()
+    isRepairingChanged = pyqtSignal()
     _updatesLoaded = pyqtSignal(list)
     _indexReady = pyqtSignal()
 
@@ -93,6 +96,7 @@ class StoreController(QObject):
         parent: QObject | None = None,
         catalog_service: CatalogService | None = None,
         transaction_service: TransactionService | None = None,
+        maintenance_service: MaintenanceService | None = None,
         mock_mode: bool | None = None,
     ) -> None:
         super().__init__(parent)
@@ -103,6 +107,7 @@ class StoreController(QObject):
             on_index_ready=lambda: self._indexReady.emit(),
         )
         self._tx_service = transaction_service or TransactionService(parent=self, mock_mode=mock_mode)
+        self._maintenance_service = maintenance_service or MaintenanceService(parent=self, mock_mode=mock_mode)
 
         # Core Reactive List Models for QML
         self._catalog_model = PackageListModel(self)
@@ -167,14 +172,20 @@ class StoreController(QObject):
         self._tx_service.cancellationBlocked.connect(lambda msg: self.toastMessage.emit("warning", msg))
         self._tx_service.transactionFinished.connect(self._on_tx_finished)
 
+        # Connect MaintenanceService signals
+        self._maintenance_service.maintenanceChanged.connect(self.maintenanceStatusChanged)
+        self._maintenance_service.isRepairingChanged.connect(self.isRepairingChanged)
+        self._maintenance_service.repairFinished.connect(self._on_repair_finished)
+
         # Initial data population
         self._init_data()
 
     def _init_data(self) -> None:
-        """Populate initial models with featured, discovery, home sections and installed packages."""
+        """Populate initial models with featured, discovery, home sections, installed packages, and health diagnostic."""
         self.refreshCatalog()
         self.refreshInstalled()
         self.checkUpdates()
+        self.runDoctorCheck()
 
     # -------------------------------------------------------------------------
     # Core Models Properties
@@ -414,6 +425,31 @@ class StoreController(QObject):
     def lastUpdateSummary(self) -> str:
         """Summary description of last system update."""
         return self._last_update_summary
+
+    @pyqtProperty(bool, notify=maintenanceStatusChanged)
+    def maintenanceRequired(self) -> bool:
+        """True if any core Redshift OS component requires repair."""
+        return self._maintenance_service.maintenance_required
+
+    @pyqtProperty(str, notify=maintenanceStatusChanged)
+    def maintenanceTitle(self) -> str:
+        """Title describing the required maintenance action."""
+        return self._maintenance_service.maintenance_title
+
+    @pyqtProperty(str, notify=maintenanceStatusChanged)
+    def maintenanceMessage(self) -> str:
+        """Detailed user-facing message for the maintenance banner."""
+        return self._maintenance_service.maintenance_message
+
+    @pyqtProperty(str, notify=maintenanceStatusChanged)
+    def maintenanceCause(self) -> str:
+        """Root cause or technical diagnosis of the component failure."""
+        return self._maintenance_service.maintenance_cause
+
+    @pyqtProperty(bool, notify=isRepairingChanged)
+    def isRepairing(self) -> bool:
+        """True if an automated repair operation is currently running."""
+        return self._maintenance_service.is_repairing
 
     # -------------------------------------------------------------------------
     # Public Slots: Filter & Search Controls (TASK-B2)
@@ -841,9 +877,28 @@ class StoreController(QObject):
         self._icon_availability_cache[clean] = found
         return found
 
+    @pyqtSlot()
+    def runDoctorCheck(self) -> None:
+        """Run health diagnostic check via redshift-doctor or native component checks."""
+        self._maintenance_service.check_health(async_mode=True)
+
+    @pyqtSlot()
+    @pyqtSlot(str)
+    def repairComponent(self, component: str = "caelestia") -> None:
+        """Trigger automated component repair via redshift-doctor."""
+        self._maintenance_service.repair_component(component or "caelestia")
+
     # -------------------------------------------------------------------------
     # Internal Signal Handlers
     # -------------------------------------------------------------------------
+
+    def _on_repair_finished(self, success: bool, message: str) -> None:
+        """Handle component repair completion."""
+        level = "success" if success else "error"
+        self.toastMessage.emit(level, message)
+        if success:
+            self.refreshCatalog()
+            self.refreshInstalled()
 
     def _on_updates_loaded(self, updates: list) -> None:
         """Apply updates list on the main Qt thread."""

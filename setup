@@ -80,6 +80,50 @@ case ${SUBCMD_NAME} in
     ;;
 esac
 
+verify_post_install_caelestia() {
+  if [[ "${INSTALL_CAELESTIA_HYBRID:-false}" != "true" ]]; then
+    log_event "Perfil ${INSTALL_PROFILE}: Caelestia não habilitado. end-4 mantido como frontend exclusivo."
+    return 0
+  fi
+
+  echo -e "\n${STY_CYAN}[setup]: Verificação pós-instalação do Caelestia Hybrid (redshift-doctor)...${STY_RST}"
+
+  local doctor_cmd="${XDG_BIN_HOME:-$HOME/.local/bin}/redshift-doctor"
+  if [[ ! -x "$doctor_cmd" ]] && [[ -x "dots/.local/bin/redshift-doctor" ]]; then
+    doctor_cmd="dots/.local/bin/redshift-doctor"
+  fi
+
+  local doctor_ok=false
+  if [[ -x "$doctor_cmd" ]]; then
+    if "$doctor_cmd" --check caelestia >/dev/null 2>&1; then
+      doctor_ok=true
+    fi
+  else
+    local cand
+    for cand in "${CAELESTIA_QML_PATH:-}" "/usr/lib/qt6/qml" "/usr/local/lib/qt6/qml" "${XDG_DATA_HOME:-$HOME/.local/share}/quickshell/qml" "$HOME/.local/lib/qt6/qml"; do
+      if [[ -n "$cand" ]] && [[ -f "$cand/Caelestia/qmldir" ]] && find "$cand/Caelestia" -type f -name "*.so*" 2>/dev/null | grep -q .; then
+        doctor_ok=true
+        break
+      fi
+    done
+  fi
+
+  if [[ "$doctor_ok" == "true" ]]; then
+    log_event "Pós-instalação: Caelestia Hybrid e plugin nativo validados com sucesso."
+    echo -e "${STY_GREEN}[OK] Caelestia Hybrid e plugin nativo validados com sucesso!${STY_RST}"
+    echo -e "${STY_GREEN}     Alternância entre end-4 e Caelestia pronta via ui-switch.sh.${STY_RST}"
+  else
+    log_event "AVISO Pós-instalação: Plugin Caelestia ausente ou quebrado. Configuração híbrida mantida em fallback para end-4."
+    echo -e "${STY_YELLOW}[AVISO] O módulo Caelestia não foi detectado ou possui dependências pendentes.${STY_RST}"
+    echo -e "${STY_YELLOW}       O sistema utilizará end-4 como frontend estável.${STY_RST}"
+    echo -e "${STY_YELLOW}       Para diagnosticar e reparar, execute: redshift-doctor --check caelestia${STY_RST}"
+    if [[ "${DRY_RUN:-false}" != "true" ]]; then
+      mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/ui-switch"
+      printf 'end4\n' > "${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/ui-switch/current"
+    fi
+  fi
+}
+
 case ${SUBCMD_NAME} in
   install)
     init_install_log
@@ -102,6 +146,7 @@ case ${SUBCMD_NAME} in
     if [[ "${SKIP_ALLFILES}" != true ]]; then
       source ${SUBCMD_DIR}/3.files.sh
     fi
+    verify_post_install_caelestia
     ;;
   install-deps)
     init_install_log
@@ -134,6 +179,7 @@ case ${SUBCMD_NAME} in
     if [[ "${SKIP_ALLFILES}" != true ]]; then
       source ${SUBCMD_DIR}/3.files.sh
     fi
+    verify_post_install_caelestia
     ;;
   *)
     source ${SUBCMD_DIR}/0.run.sh

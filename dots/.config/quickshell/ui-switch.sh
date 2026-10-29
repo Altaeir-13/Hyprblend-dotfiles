@@ -80,6 +80,12 @@ stop_video_bridge() {
 }
 
 
+# -----------------------------------------------------------------------------
+# Verificações de Três Níveis para Caelestia
+# -----------------------------------------------------------------------------
+
+# Nível 1 — Instalação:
+# Confirma se o módulo QML existe e possui qmldir e biblioteca .so presentes e legíveis.
 resolve_caelestia_plugin_dir() {
     local candidate
     local -a candidates=()
@@ -98,13 +104,79 @@ resolve_caelestia_plugin_dir() {
     fi
 
     for candidate in "${candidates[@]}"; do
-        if [[ -n "$candidate" && -f "$candidate/Caelestia/qmldir" ]]; then
-            printf '%s\n' "$candidate"
-            return 0
+        if [[ -n "$candidate" && -d "$candidate/Caelestia" ]]; then
+            # Confirmar se Caelestia/qmldir existe e é legível
+            if [[ -f "$candidate/Caelestia/qmldir" && -r "$candidate/Caelestia/qmldir" ]]; then
+                # Confirmar se a biblioteca nativa .so está presente e legível
+                if find_caelestia_plugin_so "$candidate" >/dev/null; then
+                    printf '%s\n' "$candidate"
+                    return 0
+                fi
+            fi
         fi
     done
 
     return 1
+}
+
+find_caelestia_plugin_so() {
+    local base_dir="$1"
+    if [[ -f "$base_dir/Caelestia/libcaelestia-coreplugin.so" && -r "$base_dir/Caelestia/libcaelestia-coreplugin.so" ]]; then
+        printf '%s\n' "$base_dir/Caelestia/libcaelestia-coreplugin.so"
+        return 0
+    elif [[ -f "$base_dir/Caelestia/lib/libcaelestia-core.so" && -r "$base_dir/Caelestia/lib/libcaelestia-core.so" ]]; then
+        printf '%s\n' "$base_dir/Caelestia/lib/libcaelestia-core.so"
+        return 0
+    fi
+
+    local any_so
+    any_so="$(find "$base_dir/Caelestia" -maxdepth 2 -type f -name "*.so*" 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$any_so" && -r "$any_so" ]]; then
+        printf '%s\n' "$any_so"
+        return 0
+    fi
+    return 1
+}
+
+# Nível 1: Validação com feedback formal
+check_caelestia_installation() {
+    local plugin_dir
+    if ! plugin_dir="$(resolve_caelestia_plugin_dir)"; then
+        local msg="Instalação incompleta ou ausente: plugin nativo Caelestia não encontrado. Execute 'redshift-doctor --check caelestia'."
+        echo "ERRO: $msg" >&2
+        notify_user "critical" "Instalação Caelestia Incompleta" "$msg"
+        return 1
+    fi
+    printf '%s\n' "$plugin_dir"
+    return 0
+}
+
+# Nível 2 — Compatibilidade:
+# Confirma se a biblioteca nativa .so não possui símbolos não-resolvidos nem incompatibilidade de linker com o Qt6 instalado
+check_caelestia_compatibility() {
+    local plugin_dir="$1"
+    local so_file
+    if ! so_file="$(find_caelestia_plugin_so "$plugin_dir")"; then
+        local msg="Instalação incompleta ou ausente: plugin nativo Caelestia não encontrado. Execute 'redshift-doctor --check caelestia'."
+        echo "ERRO: $msg" >&2
+        notify_user "critical" "Instalação Caelestia Incompleta" "$msg"
+        return 1
+    fi
+
+    if command -v ldd >/dev/null 2>&1; then
+        local ldd_out
+        ldd_out="$(ldd -r "$so_file" 2>&1 || true)"
+        if echo "$ldd_out" | grep -iE "undefined symbol|not found" >/dev/null; then
+            local msg="Incompatibilidade detectada entre Caelestia e Qt6/Quickshell. Execute 'redshift-doctor --repair caelestia'."
+            echo "ERRO: $msg" >&2
+            echo "Detalhes do linker (ldd -r):" >&2
+            echo "$ldd_out" | grep -iE "undefined symbol|not found" | head -n 20 >&2
+            notify_user "critical" "Incompatibilidade Caelestia / Qt6" "$msg"
+            return 2
+        fi
+    fi
+
+    return 0
 }
 
 
@@ -178,11 +250,13 @@ start_caelestia_process() {
 
     local plugin_dir
     if ! plugin_dir="$(resolve_caelestia_plugin_dir)"; then
-        echo "ERRO: Plugin QML nativo Caelestia não encontrado."
-        echo "Verifique a instalação do pacote illogical-impulse-caelestia-plugin ou defina CAELESTIA_QML_PATH."
+        local msg="Instalação incompleta ou ausente: plugin nativo Caelestia não encontrado. Execute 'redshift-doctor --check caelestia'."
+        echo "ERRO: $msg" >&2
+        notify_user "critical" "Instalação Caelestia Incompleta" "$msg"
         return 1
     fi
 
+    # Nível 3 — Operacionalidade: Inicialização e validação de estabilidade pós-lançamento
     setsid -f env \
         QML_IMPORT_PATH="$plugin_dir${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}" \
         QML2_IMPORT_PATH="$plugin_dir${QML2_IMPORT_PATH:+:$QML2_IMPORT_PATH}" \
@@ -190,16 +264,16 @@ start_caelestia_process() {
         >"$CAEL_LOG" 2>&1
 
     if ! wait_caelestia; then
-        echo "ERRO: Caelestia não iniciou."
+        echo "ERRO: Caelestia não iniciou no tempo limite." >&2
         tail -n 100 "$CAEL_LOG" 2>/dev/null || true
         return 1
     fi
 
-    # Detectar crash logo após Configuration Loaded.
+    # Detectar crash logo após Configuration Loaded (estabilidade pós-startup).
     sleep "$UI_SWITCH_STABILITY_SLEEP"
 
     if ! running_caelestia; then
-        echo "ERRO: Caelestia encerrou logo após iniciar."
+        echo "ERRO: Caelestia encerrou logo após iniciar." >&2
         tail -n 100 "$CAEL_LOG" 2>/dev/null || true
         return 1
     fi
@@ -233,10 +307,16 @@ to_caelestia() {
         return 1
     fi
 
-    # Validar disponibilidade do plugin antes de parar o frontend atual.
-    if ! resolve_caelestia_plugin_dir >/dev/null; then
-        echo "ERRO: Plugin Caelestia ausente; mantendo end-4 ativo."
-        notify_user "critical" "Plugin Caelestia ausente" "Instale illogical-impulse-caelestia-plugin. Mantendo end-4 ativo."
+    # Nível 1 — Instalação: Validar disponibilidade dos arquivos antes de parar o frontend atual.
+    local plugin_dir
+    if ! plugin_dir="$(check_caelestia_installation)"; then
+        echo "ERRO: Abortando transição para Caelestia devido à falha de instalação (Nível 1). Mantendo end-4 ativo." >&2
+        return 1
+    fi
+
+    # Nível 2 — Compatibilidade: Validar linker e símbolos Qt6 antes de parar o frontend atual.
+    if ! check_caelestia_compatibility "$plugin_dir"; then
+        echo "ERRO: Abortando transição para Caelestia devido à falha de compatibilidade (Nível 2). Mantendo end-4 ativo." >&2
         return 1
     fi
 
@@ -261,17 +341,18 @@ to_caelestia() {
     qs kill -c ii >/dev/null 2>&1 || true
     sleep "$UI_SWITCH_WAIT_SLEEP"
 
-    # Primeiro sobe o shell, porque os novos binds chamam IPC dele.
+    # Nível 3 — Operacionalidade: Primeiro sobe o shell, porque os novos binds chamam IPC dele.
     if ! start_caelestia_process; then
-        notify_user "critical" "Falha ao iniciar Caelestia" "Executando rollback automático para end-4."
+        echo "ERRO: Falha operacional no Caelestia (Nível 3). Executando rollback seguro para end-4..." >&2
+        notify_user "critical" "Falha ao iniciar Caelestia" "O frontend Caelestia falhou na inicialização ou encerrou inesperadamente. Rollback automático seguro executado para end-4."
         restore_end4
         return 1
     fi
 
     # Agora ativa os binds específicos do Caelestia.
     if ! set_frontend_state caelestia; then
-        echo "Rollback para end-4..."
-        notify_user "critical" "Falha no reload do Hyprland" "Executando rollback automático para end-4."
+        echo "Rollback para end-4..." >&2
+        notify_user "critical" "Falha no reload do Hyprland" "Executando rollback automático seguro para end-4."
         restore_end4
         return 1
     fi
