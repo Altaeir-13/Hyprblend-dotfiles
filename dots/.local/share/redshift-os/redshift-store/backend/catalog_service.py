@@ -29,6 +29,7 @@ from typing import Any, Callable, Sequence
 from .models import PackageItem
 from .security import (
     DEFAULT_PACMAN_LOCK_PATH,
+    alpm_vercmp,
     ensure_valid_package_name,
     is_protected_package,
     validate_package_name,
@@ -3604,6 +3605,10 @@ class CatalogService:
                         pkgname, old_ver, _, new_ver = parts[0], parts[1], parts[2], parts[3]
                         if not validate_package_name(pkgname):
                             continue
+                        # Verify using ALPM version comparison that new_ver is strictly newer
+                        if alpm_vercmp(new_ver, old_ver) <= 0:
+                            logger.debug("Skipping non-upgrade candidate according to ALPM: %s %s -> %s", pkgname, old_ver, new_ver)
+                            continue
                         seen.add(pkgname)
                         inst_item = self._installed_cache.get(pkgname)
                         meta = self._get_metadata_for_package(pkgname)
@@ -3647,6 +3652,9 @@ class CatalogService:
                     if len(parts) >= 4 and parts[2] == "->":
                         pkgname, old_ver, _, new_ver = parts[0], parts[1], parts[2], parts[3]
                         if not validate_package_name(pkgname) or pkgname in seen:
+                            continue
+                        if alpm_vercmp(new_ver, old_ver) <= 0:
+                            logger.debug("Skipping non-upgrade AUR candidate according to ALPM: %s %s -> %s", pkgname, old_ver, new_ver)
                             continue
                         seen.add(pkgname)
                         inst_item = self._installed_cache.get(pkgname)
@@ -4115,6 +4123,21 @@ class CatalogService:
                 provenance="pacman_sync",
                 provenance_label="Instalado no sistema",
             ),
+            PackageItem(
+                name="simdjson",
+                display_name="simdjson",
+                summary="Parsing gigabytes of JSON per second",
+                version="1:5.0.5-1",
+                installed_version="1:5.0.5-1",
+                repository="extra",
+                source="official",
+                installed=True,
+                explicit=False,
+                category="development",
+                icon_name="applications-development",
+                is_protected=False,
+                is_application=False,
+            ),
         ]
         return {p.name: p for p in raw_list}
 
@@ -4157,6 +4180,21 @@ class CatalogService:
                 popularity=13.01,
                 popularity_source="aur_rpc",
                 popularity_label="1.711 votos · pop 13.0",
+            ),
+            PackageItem(
+                name="simdjson",
+                display_name="simdjson",
+                summary="Parsing gigabytes of JSON per second",
+                version="2:5.0.5-1",
+                installed_version="1:5.0.5-1",
+                repository="extra",
+                source="official",
+                installed=True,
+                update_available=True,
+                category="development",
+                icon_name="applications-development",
+                installed_size="1.2 MiB",
+                is_application=False,
             ),
         ]
 

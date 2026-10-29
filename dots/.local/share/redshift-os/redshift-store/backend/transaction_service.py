@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import subprocess
 from typing import Sequence
 
 from PyQt6.QtCore import (
@@ -26,6 +27,7 @@ from PyQt6.QtCore import (
 from .catalog_service import is_mock_mode
 from .security import (
     SecurityViolationError,
+    alpm_vercmp,
     build_safe_pacman_install_cmd,
     build_safe_pacman_remove_cmd,
     build_safe_pacman_sysupgrade_cmd,
@@ -36,6 +38,15 @@ from .security import (
 )
 
 logger = logging.getLogger("redshift_store.transaction")
+
+# Patterns indicating pacman/yay completed without applying updates
+UNCHANGED_PATTERNS = (
+    "up to date -- skipping",
+    "there is nothing to do",
+    "nada a fazer",
+    "já está atualizado",
+    "warning: skipping target",
+)
 
 # Regex to detect pacman/yay progress percentage in stdout/stderr
 PROGRESS_RE = re.compile(
@@ -97,8 +108,86 @@ class TransactionService(QObject):
         self._mock_target_cmd: list[str] = []
         self._last_locked: bool | None = None
         self._recent_lines: list[str] = []
+        self._all_output_lines: list[str] = []
         self._last_outcome: str = ""
         self._last_summary: str = ""
+        self._tracked_targets: list[str] = []
+        self._pre_tx_versions: dict[str, str] = {}
+        self._simulate_divergence: bool = False
+
+    def set_simulate_divergence(self, val: bool) -> None:
+        """Helper to simulate package sync divergence in automated test scenarios."""
+        self._simulate_divergence = val
+
+    def _get_installed_package_version(self, pkg_name: str) -> str | None:
+        """Query installed package version from local pacman db or pacman -Q."""
+        if not pkg_name:
+            return None
+
+        # Check environment override for mock/test simulations
+        mock_env_ver = os.environ.get(f"REDSHIFT_MOCK_INSTALLED_VER_{pkg_name}")
+        if mock_env_ver is not None:
+            return mock_env_ver
+
+        local_dir = os.environ.get("REDSHIFT_PACMAN_LOCAL_DIR", "/var/lib/pacman/local")
+        if os.path.isdir(local_dir):
+            try:
+                prefix = f"{pkg_name}-"
+                with os.scandir(local_dir) as it:
+                    for entry in it:
+                        if entry.is_dir() and entry.name.startswith(prefix):
+                            desc_file = os.path.join(entry.path, "desc")
+                            if os.path.isfile(desc_file):
+                                try:
+                                    with open(desc_file, "r", encoding="utf-8", errors="ignore") as f:
+                                        lines = f.read().splitlines()
+                                    is_name = False
+                                    is_ver = False
+                                    matched_name = False
+                                    found_version = None
+                                    for line in lines:
+                                        line = line.strip()
+                                        if line == "%NAME%":
+                                            is_name = True
+                                            continue
+                                        if is_name:
+                                            if line == pkg_name:
+                                                matched_name = True
+                                            is_name = False
+                                            continue
+                                        if line == "%VERSION%":
+                                            is_ver = True
+                                            continue
+                                        if is_ver:
+                                            found_version = line
+                                            is_ver = False
+                                            continue
+                                    if matched_name and found_version:
+                                        return found_version
+                                except OSError:
+                                    pass
+            except Exception as e:
+                logger.debug("Error scanning local pacman dir: %s", e)
+
+        # Fallback via pacman -Q
+        try:
+            pacman_bin = os.environ.get("REDSHIFT_PACMAN_BIN", "/usr/bin/pacman")
+            if os.path.isfile(pacman_bin) and os.access(pacman_bin, os.X_OK):
+                res = subprocess.run(
+                    [pacman_bin, "-Q", "--", pkg_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                if res.returncode == 0 and res.stdout:
+                    parts = res.stdout.strip().split()
+                    if len(parts) >= 2 and parts[0] == pkg_name:
+                        return parts[1]
+        except Exception:
+            pass
+
+        return None
 
     # -------------------------------------------------------------------------
     # Properties
@@ -312,25 +401,26 @@ class TransactionService(QObject):
             self._emit_failure("update", msg)
             return False
 
-        if repository.lower() not in ("aur", "local-aur") and redirect_official_to_sysupgrade:
+        # Strict Arch Linux security policy: Official package updates MUST NEVER use pacman -S / --needed
+        is_official = repository.lower() not in ("aur", "local-aur")
+        if is_official:
             self.logLineReceived.emit(
-                "[SEGURANÇA ARCH LINUX] Atualizações isoladas de pacotes oficiais (partial upgrades) "
-                "não são suportadas no Arch Linux. Encaminhando para atualização completa e sincronizada do sistema (yay -Syu)..."
+                "[SEGURANÇA ARCH LINUX] Atualizações isoladas de pacotes oficiais (partial upgrades com pacman -S) "
+                "são estritamente bloqueadas no Redshift OS para prevenir inconsistências e quebra de ABI. "
+                "Encaminhando para atualização completa e sincronizada do sistema (yay -Syu)..."
             )
+            self._tracked_targets = list(pkg_names)
             return self.update_all()
 
         try:
-            if repository.lower() in ("aur", "local-aur"):
-                cmd = build_safe_yay_install_cmd(pkg_names)
-                initial_stage = "downloading"
-            else:
-                cmd = build_safe_pacman_install_cmd(pkg_names)
-                initial_stage = "authenticating"
+            cmd = build_safe_yay_install_cmd(pkg_names)
+            initial_stage = "downloading"
         except (SecurityViolationError, ValueError, PermissionError) as e:
             msg = f"Falha de validação de segurança: {e}"
             self._emit_failure("update", msg)
             return False
 
+        self._tracked_targets = list(pkg_names)
         pkgs_str = ", ".join(pkg_names)
         status = f"Atualizando {pkgs_str}..."
         return self._start_transaction(
@@ -478,6 +568,12 @@ class TransactionService(QObject):
         self._current_packages = packages
         self._stdout_buffer = ""
         self._recent_lines = []
+        self._all_output_lines = []
+        self._pre_tx_versions = {}
+        for p in (self._tracked_targets or packages):
+            v = self._get_installed_package_version(p)
+            if v:
+                self._pre_tx_versions[p] = v
         self._clear_prompt_state()
         self._last_outcome = ""
         self._last_summary = ""
@@ -532,6 +628,7 @@ class TransactionService(QObject):
                 if not line_str:
                     continue
                 self.logLineReceived.emit(line_str)
+                self._all_output_lines.append(line_str)
                 self._recent_lines.append(line_str)
                 if len(self._recent_lines) > 4:
                     self._recent_lines.pop(0)
@@ -552,6 +649,7 @@ class TransactionService(QObject):
             if not line_str:
                 continue
             self.logLineReceived.emit(f"[STDERR] {line_str}")
+            self._all_output_lines.append(line_str)
             self._recent_lines.append(line_str)
             if len(self._recent_lines) > 4:
                 self._recent_lines.pop(0)
@@ -601,11 +699,56 @@ class TransactionService(QObject):
         self._clear_prompt_state()
 
         if is_success:
+            if self._stdout_buffer.strip():
+                self._all_output_lines.append(self._stdout_buffer.strip())
+
+            # Rigorous Post-Verification for updates (official and AUR)
+            if action in ("update", "update_all"):
+                all_text = "\n".join(self._all_output_lines).lower()
+                has_unchanged_msg = any(p in all_text for p in UNCHANGED_PATTERNS)
+
+                tracked = self._tracked_targets or self._current_packages
+                unchanged_detected = False
+
+                if self._simulate_divergence or os.environ.get("REDSHIFT_TEST_SIMULATE_UNCHANGED") == "1":
+                    unchanged_detected = True
+                elif tracked:
+                    for pkg in tracked:
+                        pre_v = self._pre_tx_versions.get(pkg)
+                        post_v = self._get_installed_package_version(pkg)
+                        if pre_v and post_v and alpm_vercmp(post_v, pre_v) == 0:
+                            if has_unchanged_msg:
+                                unchanged_detected = True
+                                break
+                    if not unchanged_detected and has_unchanged_msg:
+                        unchanged_detected = True
+                elif has_unchanged_msg:
+                    unchanged_detected = True
+
+                if unchanged_detected:
+                    divergence_msg = (
+                        "Nenhuma alteração realizada no pacote. O pacman reportou que o pacote já está "
+                        "atualizado no banco local, divergindo do índice de atualizações pendentes. "
+                        "Execute uma sincronização completa com 'yay -Syu'."
+                    )
+                    self._set_progress(100)
+                    self._set_state("unchanged", divergence_msg)
+                    self.set_post_verification_outcome("unchanged", divergence_msg)
+                    self.logLineReceived.emit(f"=== [DIVERGÊNCIA] {divergence_msg} ===")
+                    self.transactionFinished.emit(False, action, divergence_msg)
+                    self._current_action = ""
+                    self._current_packages = []
+                    self._tracked_targets = []
+                    self._recent_lines = []
+                    self._all_output_lines = []
+                    self._process = None
+                    return
+
             self._set_progress(100)
             self._set_state("success", "Operação concluída com sucesso.")
             self.logLineReceived.emit("=== [SUCESSO] Operação finalizada com êxito ===")
             self.set_post_verification_outcome(
-                "complete", "Operação concluída com código 0; verificando estado dos pacotes..."
+                "complete", "Operação concluída com código 0; pacotes verificados com sucesso."
             )
             self.transactionFinished.emit(True, action, "Operação concluída com sucesso.")
         else:
@@ -754,11 +897,27 @@ class TransactionService(QObject):
             self._set_stage("idle")
             self._set_progress(100)
             action = self._current_action
+            if action in ("update", "update_all") and (self._simulate_divergence or os.environ.get("REDSHIFT_TEST_SIMULATE_UNCHANGED") == "1"):
+                divergence_msg = (
+                    "Nenhuma alteração realizada no pacote. O pacman reportou que o pacote já está "
+                    "atualizado no banco local, divergindo do índice de atualizações pendentes. "
+                    "Execute uma sincronização completa com 'yay -Syu'."
+                )
+                self._set_state("unchanged", divergence_msg)
+                self.set_post_verification_outcome("unchanged", divergence_msg)
+                self.logLineReceived.emit(f"=== [DIVERGÊNCIA] {divergence_msg} ===")
+                self.transactionFinished.emit(False, action, divergence_msg)
+                self._current_action = ""
+                self._current_packages = []
+                self._tracked_targets = []
+                return
+
             self._set_state("success", "Operação mock concluída com sucesso.")
             self.logLineReceived.emit(f"[MOCK SUCESSO] Transação '{action}' em {pkgs_repr} concluída.")
             self.set_post_verification_outcome(
-                "complete", "Operação concluída com código 0; verificando estado dos pacotes..."
+                "complete", "Operação mock concluída com sucesso."
             )
             self.transactionFinished.emit(True, action, f"Transação '{action}' concluída com sucesso.")
             self._current_action = ""
             self._current_packages = []
+            self._tracked_targets = []

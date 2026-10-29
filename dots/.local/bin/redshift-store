@@ -6,8 +6,9 @@
 # Supports source resolution across user directory (~/.local/share),
 # system installation (/usr/share) and repository clone.
 # Supports REDSHIFT_STORE_SOURCE ('user', 'system', 'repo') override.
-# When both user and system copies exist, selects based on structural integrity
-# and semantic version (VERSION in main.py) without depending on mtime.
+# When multiple copies exist, selects based on structural integrity
+# and semantic/ALPM version (VERSION in main.py) without depending on mtime.
+# Logs the chosen main.py path and version deterministically.
 # =============================================================================
 
 set -euo pipefail
@@ -21,12 +22,13 @@ esac
 XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 INSTALLED_MAIN="${XDG_DATA_HOME}/redshift-os/redshift-store/main.py"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_MAIN="${SCRIPT_DIR}/main.py"
 RELATIVE_MAIN="$(cd "${SCRIPT_DIR}/../share/redshift-os/redshift-store" 2>/dev/null && pwd || true)/main.py"
 SYSTEM_MAIN="${REDSHIFT_STORE_SYSTEM_MAIN:-/usr/share/redshift-os/redshift-store/main.py}"
 
 _is_valid_store_dir() {
     local main_py="$1"
-    [[ -f "$main_py" ]] || return 1
+    [[ -n "$main_py" && -f "$main_py" ]] || return 1
     local dir
     dir="$(dirname "$main_py")"
     [[ -f "$dir/backend/__init__.py" && -f "$dir/qml/Main.qml" ]]
@@ -56,34 +58,30 @@ _compare_versions() {
         echo "0"
         return 0
     fi
-    local lowest
-    lowest="$(printf "%s\n%s\n" "$v1" "$v2" | sort -V | head -n 1)"
-    if [[ "$lowest" == "$v1" ]]; then
-        echo "-1"
-    else
-        echo "1"
+    local ep1=0 ep2=0 r1="$v1" r2="$v2"
+    if [[ "$v1" == *:* ]]; then
+        ep1="${v1%%:*}"
+        r1="${v1#*:}"
     fi
-}
-
-_resolve_coexistence() {
-    local usr_valid=0 sys_valid=0
-    if _is_valid_store_dir "$INSTALLED_MAIN"; then usr_valid=1; fi
-    if _is_valid_store_dir "$SYSTEM_MAIN"; then sys_valid=1; fi
-
-    if (( usr_valid && !sys_valid )); then
-        MAIN_PY="$INSTALLED_MAIN"
-    elif (( !usr_valid && sys_valid )); then
-        MAIN_PY="$SYSTEM_MAIN"
+    if [[ "$v2" == *:* ]]; then
+        ep2="${v2%%:*}"
+        r2="${v2#*:}"
+    fi
+    if (( ep1 < ep2 )); then
+        echo "-1"
+        return 0
+    elif (( ep1 > ep2 )); then
+        echo "1"
+        return 0
+    fi
+    local lowest
+    lowest="$(printf "%s\n%s\n" "$r1" "$r2" | sort -V | head -n 1)"
+    if [[ "$lowest" == "$r1" && "$lowest" != "$r2" ]]; then
+        echo "-1"
+    elif [[ "$lowest" == "$r2" && "$lowest" != "$r1" ]]; then
+        echo "1"
     else
-        local sys_ver usr_ver cmp_res
-        sys_ver="$(_extract_version "$SYSTEM_MAIN")"
-        usr_ver="$(_extract_version "$INSTALLED_MAIN")"
-        cmp_res="$(_compare_versions "$sys_ver" "$usr_ver")"
-        if (( cmp_res > 0 )); then
-            MAIN_PY="$SYSTEM_MAIN"
-        else
-            MAIN_PY="$INSTALLED_MAIN"
-        fi
+        echo "0"
     fi
 }
 
@@ -91,41 +89,63 @@ MAIN_PY=""
 
 case "${REDSHIFT_STORE_SOURCE:-}" in
     user)
-        if [[ -f "$INSTALLED_MAIN" ]]; then
+        if _is_valid_store_dir "$INSTALLED_MAIN"; then
             MAIN_PY="$INSTALLED_MAIN"
         else
-            printf "Error: REDSHIFT_STORE_SOURCE=user requested, but %s not found.\n" "$INSTALLED_MAIN" >&2
+            printf "Error: REDSHIFT_STORE_SOURCE=user requested, but %s is invalid or not found.\n" "$INSTALLED_MAIN" >&2
             exit 1
         fi
         ;;
     system)
-        if [[ -f "$SYSTEM_MAIN" ]]; then
+        if _is_valid_store_dir "$SYSTEM_MAIN"; then
             MAIN_PY="$SYSTEM_MAIN"
         else
-            printf "Error: REDSHIFT_STORE_SOURCE=system requested, but %s not found.\n" "$SYSTEM_MAIN" >&2
+            printf "Error: REDSHIFT_STORE_SOURCE=system requested, but %s is invalid or not found.\n" "$SYSTEM_MAIN" >&2
             exit 1
         fi
         ;;
     repo)
-        if [[ -f "$RELATIVE_MAIN" ]]; then
+        if _is_valid_store_dir "$LOCAL_MAIN"; then
+            MAIN_PY="$LOCAL_MAIN"
+        elif _is_valid_store_dir "$RELATIVE_MAIN"; then
             MAIN_PY="$RELATIVE_MAIN"
         else
-            printf "Error: REDSHIFT_STORE_SOURCE=repo requested, but %s not found.\n" "$RELATIVE_MAIN" >&2
+            printf "Error: REDSHIFT_STORE_SOURCE=repo requested, but neither %s nor %s is valid.\n" "$LOCAL_MAIN" "$RELATIVE_MAIN" >&2
             exit 1
         fi
         ;;
     "")
-        # Automatic coexistence resolution
-        if [[ -f "$INSTALLED_MAIN" && -f "$SYSTEM_MAIN" ]]; then
-            _resolve_coexistence
-        elif [[ -f "$INSTALLED_MAIN" ]]; then
-            MAIN_PY="$INSTALLED_MAIN"
-        elif [[ -f "$RELATIVE_MAIN" ]]; then
-            MAIN_PY="$RELATIVE_MAIN"
-        elif [[ -f "$SYSTEM_MAIN" ]]; then
-            MAIN_PY="$SYSTEM_MAIN"
+        # Deterministic coexistence resolution across all discovered candidates
+        candidates=()
+        [[ -f "$INSTALLED_MAIN" ]] && candidates+=("$INSTALLED_MAIN")
+        [[ -f "$LOCAL_MAIN" && "$LOCAL_MAIN" != "$INSTALLED_MAIN" ]] && candidates+=("$LOCAL_MAIN")
+        [[ -f "$RELATIVE_MAIN" && "$RELATIVE_MAIN" != "$INSTALLED_MAIN" && "$RELATIVE_MAIN" != "$LOCAL_MAIN" ]] && candidates+=("$RELATIVE_MAIN")
+        [[ -f "$SYSTEM_MAIN" ]] && candidates+=("$SYSTEM_MAIN")
+
+        best_cand=""
+        best_ver="0.0.0"
+
+        for cand in "${candidates[@]}"; do
+            if _is_valid_store_dir "$cand"; then
+                cand_ver="$(_extract_version "$cand")"
+                if [[ -z "$best_cand" ]]; then
+                    best_cand="$cand"
+                    best_ver="$cand_ver"
+                else
+                    cmp_res="$(_compare_versions "$cand_ver" "$best_ver")"
+                    if (( cmp_res > 0 )); then
+                        best_cand="$cand"
+                        best_ver="$cand_ver"
+                    fi
+                fi
+            fi
+        done
+
+        if [[ -n "$best_cand" ]]; then
+            MAIN_PY="$best_cand"
         else
-            printf "Error: Redshift Store main.py not found at:\n  - %s\n  - %s\n  - %s\n" "$INSTALLED_MAIN" "$RELATIVE_MAIN" "$SYSTEM_MAIN" >&2
+            printf "Error: Redshift Store main.py not found at any known location:\n  - %s\n  - %s\n  - %s\n  - %s\n" \
+                "$INSTALLED_MAIN" "$LOCAL_MAIN" "$RELATIVE_MAIN" "$SYSTEM_MAIN" >&2
             exit 1
         fi
         ;;
@@ -135,5 +155,10 @@ case "${REDSHIFT_STORE_SOURCE:-}" in
         ;;
 esac
 
-exec python3 "$MAIN_PY" "$@"
+CHOSEN_VER="$(_extract_version "$MAIN_PY")"
+echo "[redshift-store launcher] Resolved main.py: ${MAIN_PY} (version: ${CHOSEN_VER})" >&2
+if command -v logger >/dev/null 2>&1; then
+    logger -t redshift-store-launcher "Resolved main.py: ${MAIN_PY} (version: ${CHOSEN_VER})" || true
+fi
 
+exec python3 "$MAIN_PY" "$@"
