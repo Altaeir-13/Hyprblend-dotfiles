@@ -7,9 +7,11 @@ for AUR, graphical Polkit agent verification, and safe command builders.
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import re
+import shutil
 import subprocess
 import time
 from typing import Sequence
@@ -432,3 +434,91 @@ def build_safe_yay_sysupgrade_cmd(euid: int | None = None) -> list[str]:
         "--cleanmenu",
         "--diffmenu",
     ]
+
+
+def alpm_vercmp(v1: str, v2: str) -> int:
+    """Compare two ALPM/Arch Linux package version strings, respecting epochs and pkgrels.
+
+    Returns:
+        < 0 if v1 < v2
+        0   if v1 == v2
+        > 0 if v1 > v2
+    """
+    v1_str = str(v1 or "").strip()
+    v2_str = str(v2 or "").strip()
+    if v1_str == v2_str:
+        return 0
+
+    # 1. Try native libalpm.so via ctypes
+    try:
+        lib = ctypes.CDLL("libalpm.so")
+        lib.alpm_pkg_vercmp.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+        lib.alpm_pkg_vercmp.restype = ctypes.c_int
+        return int(lib.alpm_pkg_vercmp(v1_str.encode("utf-8"), v2_str.encode("utf-8")))
+    except Exception:
+        pass
+
+    # 2. Try vercmp binary from pacman
+    vercmp_bin = shutil.which("vercmp")
+    if vercmp_bin:
+        try:
+            res = subprocess.run([vercmp_bin, v1_str, v2_str], capture_output=True, text=True, check=True)
+            return int(res.stdout.strip())
+        except Exception:
+            pass
+
+    # 3. Pure Python ALPM-compatible version comparison with epoch support
+    def _parse_evr(val: str) -> tuple[int, str, str]:
+        epoch = 0
+        if ":" in val:
+            ep_part, rest = val.split(":", 1)
+            try:
+                epoch = int(ep_part)
+            except ValueError:
+                epoch = 0
+        else:
+            rest = val
+        if "-" in rest:
+            ver, rel = rest.rsplit("-", 1)
+        else:
+            ver, rel = rest, "0"
+        return epoch, ver, rel
+
+    def _split_segments(s: str) -> list[int | str]:
+        return [int(c) if c.isdigit() else c for c in re.findall(r"\d+|[a-zA-Z]+", s)]
+
+    def _cmp_part(s1: str, s2: str) -> int:
+        segs1 = _split_segments(s1)
+        segs2 = _split_segments(s2)
+        for p1, p2 in zip(segs1, segs2):
+            if isinstance(p1, int) and isinstance(p2, int):
+                if p1 < p2:
+                    return -1
+                if p1 > p2:
+                    return 1
+            elif isinstance(p1, int) and isinstance(p2, str):
+                return 1
+            elif isinstance(p1, str) and isinstance(p2, int):
+                return -1
+            else:
+                if p1 < p2:
+                    return -1
+                if p1 > p2:
+                    return 1
+        if len(segs1) < len(segs2):
+            return -1
+        if len(segs1) > len(segs2):
+            return 1
+        return 0
+
+    e1, v1_p, r1 = _parse_evr(v1_str)
+    e2, v2_p, r2 = _parse_evr(v2_str)
+    if e1 < e2:
+        return -1
+    if e1 > e2:
+        return 1
+    cmp_v = _cmp_part(v1_p, v2_p)
+    if cmp_v != 0:
+        return cmp_v
+    return _cmp_part(r1, r2)
+
