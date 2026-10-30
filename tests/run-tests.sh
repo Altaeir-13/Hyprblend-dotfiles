@@ -1981,6 +1981,63 @@ EOF
 ) && pass "Cenário I: Instalação limpa — Perfil hybrid disponibiliza ambos frontends e preserva perfil minimal" \
   || fail "Cenário I: Instalação limpa — Inconsistência na instalação limpa de perfis"
 
+# -----------------------------------------------------------------------------
+# 12. Validação de Integridade e Configuração do Hyprland (render_power <= 4)
+# -----------------------------------------------------------------------------
+printf "\n${CLR_CYAN}=== 12. Validação de Integridade e Configuração do Hyprland (render_power <= 4) ===${CLR_RST}\n"
+
+# 1. Validação estática nos dotfiles do repositório
+dots_hypr_general="${REPO_ROOT}/dots/.config/hypr/hyprland/general.lua"
+assert_file_exists "$dots_hypr_general" "Arquivo de configuração dots/.config/hypr/hyprland/general.lua existe"
+
+rp_dots="$(sed -nE 's/.*render_power[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$dots_hypr_general" | head -n 1)"
+if [[ -n "$rp_dots" ]] && (( rp_dots <= 4 && rp_dots >= 1 )); then
+    pass "general.lua nos dotfiles possui render_power=$rp_dots no limite suportado (<= 4)"
+else
+    fail "general.lua nos dotfiles possui render_power inválido: '$rp_dots' (deve ser <= 4 e >= 1)"
+fi
+
+# 2. Validação de instalação via setup no sandbox
+(
+    sb_hypr="$(create_sandbox "hypr-render-power")"
+    export HOME="$sb_hypr/home"
+    export XDG_CONFIG_HOME="$sb_hypr/home/.config"
+    export XDG_DATA_HOME="$sb_hypr/home/.local/share"
+    export XDG_BIN_HOME="$sb_hypr/home/.local/bin"
+    export PATH="$sb_hypr/bin:$PATH"
+    export MOCK_STATE_DIR="$sb_hypr/mock-state"
+
+    iso_hypr="$(create_isolated_repo "hypr-repo")"
+    "$iso_hypr/setup" install-files -p minimal -f --skip-allgreeting >/dev/null
+
+    installed_general="$XDG_CONFIG_HOME/hypr/hyprland/general.lua"
+    assert_file_exists "$installed_general" "setup distribui ~/.config/hypr/hyprland/general.lua"
+
+    rp_installed="$(sed -nE 's/.*render_power[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$installed_general" | head -n 1)"
+    if [[ "$rp_installed" == "4" ]]; then
+        pass "Instalador setup distribui general.lua com render_power = 4"
+    else
+        fail "Instalador setup distribuiu general.lua com render_power = '$rp_installed' (esperado: 4)"
+    fi
+
+    # 3. Validação via redshift-doctor --check hyprland
+    doctor_out="$("${REPO_ROOT}/dots/.local/bin/redshift-doctor" --check hyprland --json)"
+    if echo "$doctor_out" | grep -q '"status": "ok"'; then
+        pass "redshift-doctor valida render_power <= 4 com sucesso"
+    else
+        fail "redshift-doctor falhou na verificação do Hyprland: $doctor_out"
+    fi
+
+    # 4. Teste de regressão com render_power inválido (> 4)
+    sed -i 's/render_power = 4/render_power = 10/' "$installed_general"
+    doctor_err_out="$("${REPO_ROOT}/dots/.local/bin/redshift-doctor" --check hyprland --json 2>&1 || true)"
+    if echo "$doctor_err_out" | grep -q '"status": "error"'; then
+        pass "redshift-doctor rejeita render_power > 4 com status error"
+    else
+        fail "redshift-doctor não rejeitou render_power=10 como esperado"
+    fi
+)
+
 printf "\n=============================================================================\n"
 printf "Resumo dos Testes: ${CLR_GREEN}%d aprovados${CLR_RST}, ${CLR_RED}%d falharam${CLR_RST} (total: %d)\n" \
     "$PASS_COUNT" "$FAIL_COUNT" "$TOTAL_COUNT"

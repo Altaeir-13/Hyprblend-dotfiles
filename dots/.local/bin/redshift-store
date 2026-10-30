@@ -7,7 +7,7 @@
 # system installation (/usr/share) and repository clone.
 # Supports REDSHIFT_STORE_SOURCE ('user', 'system', 'repo') override.
 # When both user and system copies exist, selects based on structural integrity
-# and semantic version (VERSION in main.py) without depending on mtime.
+# and ALPM/semantic version (VERSION in main.py) without depending on mtime.
 # =============================================================================
 
 set -euo pipefail
@@ -26,7 +26,7 @@ SYSTEM_MAIN="${REDSHIFT_STORE_SYSTEM_MAIN:-/usr/share/redshift-os/redshift-store
 
 _is_valid_store_dir() {
     local main_py="$1"
-    [[ -f "$main_py" ]] || return 1
+    [[ -n "$main_py" && -f "$main_py" ]] || return 1
     local dir
     dir="$(dirname "$main_py")"
     [[ -f "$dir/backend/__init__.py" && -f "$dir/qml/Main.qml" ]]
@@ -56,12 +56,30 @@ _compare_versions() {
         echo "0"
         return 0
     fi
-    local lowest
-    lowest="$(printf "%s\n%s\n" "$v1" "$v2" | sort -V | head -n 1)"
-    if [[ "$lowest" == "$v1" ]]; then
+    local ep1=0 ep2=0 r1="$v1" r2="$v2"
+    if [[ "$v1" == *:* ]]; then
+        ep1="${v1%%:*}"
+        r1="${v1#*:}"
+    fi
+    if [[ "$v2" == *:* ]]; then
+        ep2="${v2%%:*}"
+        r2="${v2#*:}"
+    fi
+    if (( ep1 < ep2 )); then
         echo "-1"
-    else
+        return 0
+    elif (( ep1 > ep2 )); then
         echo "1"
+        return 0
+    fi
+    local lowest
+    lowest="$(printf "%s\n%s\n" "$r1" "$r2" | sort -V | head -n 1)"
+    if [[ "$lowest" == "$r1" && "$lowest" != "$r2" ]]; then
+        echo "-1"
+    elif [[ "$lowest" == "$r2" && "$lowest" != "$r1" ]]; then
+        echo "1"
+    else
+        echo "0"
     fi
 }
 
@@ -74,7 +92,7 @@ _resolve_coexistence() {
         MAIN_PY="$INSTALLED_MAIN"
     elif (( !usr_valid && sys_valid )); then
         MAIN_PY="$SYSTEM_MAIN"
-    else
+    elif (( usr_valid && sys_valid )); then
         local sys_ver usr_ver cmp_res
         sys_ver="$(_extract_version "$SYSTEM_MAIN")"
         usr_ver="$(_extract_version "$INSTALLED_MAIN")"
@@ -84,6 +102,8 @@ _resolve_coexistence() {
         else
             MAIN_PY="$INSTALLED_MAIN"
         fi
+    else
+        MAIN_PY=""
     fi
 }
 
@@ -115,16 +135,18 @@ case "${REDSHIFT_STORE_SOURCE:-}" in
         fi
         ;;
     "")
-        # Automatic coexistence resolution
+        # Automatic coexistence resolution between user and system installations
         if [[ -f "$INSTALLED_MAIN" && -f "$SYSTEM_MAIN" ]]; then
             _resolve_coexistence
         elif [[ -f "$INSTALLED_MAIN" ]]; then
             MAIN_PY="$INSTALLED_MAIN"
-        elif [[ -f "$RELATIVE_MAIN" ]]; then
-            MAIN_PY="$RELATIVE_MAIN"
         elif [[ -f "$SYSTEM_MAIN" ]]; then
             MAIN_PY="$SYSTEM_MAIN"
-        else
+        elif [[ -f "$RELATIVE_MAIN" ]]; then
+            MAIN_PY="$RELATIVE_MAIN"
+        fi
+
+        if [[ -z "$MAIN_PY" ]]; then
             printf "Error: Redshift Store main.py not found at:\n  - %s\n  - %s\n  - %s\n" "$INSTALLED_MAIN" "$RELATIVE_MAIN" "$SYSTEM_MAIN" >&2
             exit 1
         fi
@@ -135,5 +157,12 @@ case "${REDSHIFT_STORE_SOURCE:-}" in
         ;;
 esac
 
-exec python3 "$MAIN_PY" "$@"
+CHOSEN_VER="$(_extract_version "$MAIN_PY")"
+if [[ "${REDSHIFT_STORE_DEBUG:-0}" == "1" ]]; then
+    echo "[redshift-store launcher] Resolved main.py: ${MAIN_PY} (version: ${CHOSEN_VER})" >&2
+fi
+if command -v logger >/dev/null 2>&1; then
+    logger -t redshift-store-launcher "Resolved main.py: ${MAIN_PY} (version: ${CHOSEN_VER})" 2>/dev/null || true
+fi
 
+exec python3 "$MAIN_PY" "$@"

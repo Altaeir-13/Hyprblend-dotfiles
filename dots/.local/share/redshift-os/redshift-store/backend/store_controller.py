@@ -939,10 +939,18 @@ class StoreController(QObject):
             remaining_updates = self._catalog_service.check_updates()
             self._updates_model.set_items(remaining_updates)
 
-            if not success:
-                if self._tx_service.state == "cancelled":
+            if not success or getattr(self._tx_service, "last_outcome", "") == "unchanged" or self._tx_service.state == "unchanged":
+                if self._tx_service.state == "cancelled" or getattr(self._tx_service, "last_outcome", "") == "cancelled":
                     self._last_update_outcome = "cancelled"
                     self._last_update_summary = message or "Atualização cancelada pelo usuário."
+                    toast_level = "warning"
+                elif self._tx_service.state == "unchanged" or getattr(self._tx_service, "last_outcome", "") == "unchanged":
+                    self._last_update_outcome = "unchanged"
+                    self._last_update_summary = (
+                        getattr(self._tx_service, "last_summary", "")
+                        or message
+                        or "Nenhuma alteração realizada no pacote. O pacman reportou que o pacote já está atualizado no banco local, divergindo do índice de atualizações pendentes. Execute uma sincronização completa com 'yay -Syu'."
+                    )
                     toast_level = "warning"
                 else:
                     self._last_update_outcome = "failed"

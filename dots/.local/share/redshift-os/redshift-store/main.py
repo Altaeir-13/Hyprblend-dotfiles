@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("redshift_store.main")
 
-VERSION = "1.0.0"
+VERSION = "2.1.0"
 
 GENERIC_FALLBACK_ICONS = frozenset({
     "applications-other",
@@ -176,6 +176,21 @@ def main() -> int:
     """Initialize and run Redshift Store."""
     args = parse_args()
 
+    # Resolve directories
+    base_dir = Path(__file__).resolve().parent
+    qml_dir = base_dir / "qml"
+    main_qml = qml_dir / "Main.qml"
+    backend_path = base_dir / "backend"
+
+    # Startup Diagnostic Logging
+    logger.info("===================================================================")
+    logger.info("Iniciando Redshift Store v%s [PID: %d]", VERSION, os.getpid())
+    logger.info("Executável Python: %s", sys.executable)
+    logger.info("Caminho do script principal (main.py): %s", Path(__file__).resolve())
+    logger.info("Caminho do pacote backend: %s", backend_path)
+    logger.info("Diretório QML: %s (Main.qml: %s, existe: %s)", qml_dir, main_qml, main_qml.is_file())
+    logger.info("===================================================================")
+
     # Enable mock mode if requested via CLI
     if args.mock:
         os.environ["REDSHIFT_STORE_MOCK"] = "1"
@@ -207,11 +222,6 @@ def main() -> int:
             break
     else:
         app.setWindowIcon(QIcon.fromTheme("system-software-install"))
-
-    # Resolve directories
-    base_dir = Path(__file__).resolve().parent
-    qml_dir = base_dir / "qml"
-    main_qml = qml_dir / "Main.qml"
 
     # Instantiate Bridges
     mock_active = is_mock_mode()

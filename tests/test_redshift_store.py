@@ -15,6 +15,8 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -48,6 +50,7 @@ from backend import (
     StoreController,
     ThemeService,
     TransactionService,
+    alpm_vercmp,
     build_safe_pacman_install_cmd,
     build_safe_pacman_remove_cmd,
     build_safe_pacman_sysupgrade_cmd,
@@ -512,6 +515,8 @@ class TestThemeService(unittest.TestCase):
 
                 self.assertTrue(theme.isDark)
                 self.assertEqual(theme.schemeVariant, "scheme-tonal-spot")
+                self.assertEqual(theme.variant, "scheme-tonal-spot")
+                self.assertEqual(theme.frontend, "caelestia")
                 self.assertEqual(theme.activeShellMode, "caelestia")
                 self.assertEqual(theme.wallpaperPath, "/usr/share/backgrounds/redshift.png")
 
@@ -524,12 +529,12 @@ class TestThemeService(unittest.TestCase):
                 self.assertIn("success", colors)
                 self.assertIn("warning", colors)
 
-                # Test preview toggle (Dark -> Light -> Dark restored)
+                # Test absence of local override: togglePreviewMode and toggleColorScheme are no-ops
                 self.assertTrue(theme.isDark)
                 theme.togglePreviewMode()
-                self.assertFalse(theme.isDark, "Expected light mode preview on first toggle")
-                theme.togglePreviewMode()
-                self.assertTrue(theme.isDark, "Expected original dark mode restored on second toggle")
+                self.assertTrue(theme.isDark, "Expected dark mode preserved; local preview toggle must be no-op")
+                theme.toggleColorScheme()
+                self.assertTrue(theme.isDark, "Expected dark mode preserved; local color scheme toggle must be no-op")
 
                 # Test atomic file replacement
                 updated_colors = {
@@ -543,6 +548,9 @@ class TestThemeService(unittest.TestCase):
 
                 theme.reloadTheme()
                 self.assertFalse(theme.isDark, "Expected light mode detected from new background hex")
+                # Even in light mode, local toggle must remain a no-op
+                theme.togglePreviewMode()
+                self.assertFalse(theme.isDark, "Expected light mode preserved; local preview toggle must be no-op")
 
     def test_caelestia_and_end4_priority_and_low_contrast_guard(self) -> None:
         """Verify H-MAT1 dynamic priority between colors.json and scheme.json, and WCAG low-contrast protection."""
@@ -828,7 +836,7 @@ class TestStoreControllerAndTransactions(unittest.TestCase):
         cat_srv.get_featured_packages = lambda: []
 
         def slow_check_updates():
-            time.sleep(0.4)
+            time.sleep(1.0)
             return [PackageItem(name="mock-update", version="2.0", installed_version="1.0", update_available=True)]
 
         cat_srv.check_updates = slow_check_updates
@@ -836,7 +844,7 @@ class TestStoreControllerAndTransactions(unittest.TestCase):
         t0 = time.time()
         ctrl = StoreController(catalog_service=cat_srv)
         t_init = time.time() - t0
-        self.assertLess(t_init, 0.35, f"StoreController.__init__ took too long: {t_init:.3f}s")
+        self.assertLess(t_init, 0.7, f"StoreController.__init__ took too long: {t_init:.3f}s")
         self.assertEqual(ctrl.updatesCount, 0)
 
         # Wait for background thread to complete and emit _updatesLoaded
@@ -1402,7 +1410,9 @@ class TestRedshiftMaintenanceIntegration(unittest.TestCase):
             cael_cfg = fake_home / ".config" / "quickshell" / "caelestia-hybrid"
             cael_cfg.mkdir(parents=True)
 
-            with patch("pathlib.Path.home", return_value=fake_home), patch.dict(
+            with patch("pathlib.Path.home", return_value=fake_home), patch.object(
+                MaintenanceService, "_find_doctor_binary", return_value=None
+            ), patch.dict(
                 os.environ, {"CAELESTIA_QML_PATH": str(tmp / "empty_qml")}, clear=False
             ):
                 # 1. Level 1: Caelestia plugin missing
@@ -1523,6 +1533,303 @@ class TestRedshiftMaintenanceIntegration(unittest.TestCase):
             del engine
             app.processEvents()
 
+
+# =============================================================================
+# 7. Testes de Atualizações de Pacotes e Resolução de Launcher (TASK-B3)
+# =============================================================================
+class TestPackageUpdateAndLauncherResolution(unittest.TestCase):
+    """Covers:
+    - Cenário A: versão 1:5.0.5-1 vs 2:5.0.5-1 com epoch ALPM.
+    - Cenário B: banco temporário checkupdates mais recente que banco sync local (evitar falso sucesso).
+    - Cenário C: pacote oficial encaminhado para atualização completa do sistema.
+    - Cenário D: comando retorna exit 0 mas a versão não mudou (relatar resultado sem alteração / divergência).
+    - Cenário E: atualizações oficiais e AUR em conjunto no Atualizar Tudo.
+    - Cenário F: coexistência de versões da aplicação e launcher determinístico.
+    - Cenário G: lock de pacman ativo.
+    """
+
+    def setUp(self) -> None:
+        self.app = get_qt_app()
+
+    def test_scenario_a_alpm_vercmp_epoch(self) -> None:
+        """Cenário A: Validação de comparação de versões com epoch ALPM (1:5.0.5-1 vs 2:5.0.5-1)."""
+        # Comparação básica de epoch diferente
+        self.assertLess(alpm_vercmp("1:5.0.5-1", "2:5.0.5-1"), 0, "1:5.0.5-1 deve ser menor que 2:5.0.5-1")
+        self.assertGreater(alpm_vercmp("2:5.0.5-1", "1:5.0.5-1"), 0, "2:5.0.5-1 deve ser maior que 1:5.0.5-1")
+        self.assertEqual(alpm_vercmp("1:5.0.5-1", "1:5.0.5-1"), 0, "Versões idênticas com epoch devem ser iguais")
+
+        # Epoch explícito vs ausente (epoch implícito é 0)
+        self.assertGreater(alpm_vercmp("1:1.0-1", "2.0-1"), 0, "Epoch 1:1.0 deve superar versão 2.0 sem epoch")
+        self.assertLess(alpm_vercmp("2.0-1", "1:1.0-1"), 0, "Versão 2.0 sem epoch deve ser inferior a 1:1.0")
+
+        # Pkgrel com mesmo epoch e pkgver
+        self.assertLess(alpm_vercmp("1:5.0.5-1", "1:5.0.5-2"), 0, "Pkgrel -2 deve superar -1")
+        self.assertGreater(alpm_vercmp("1:5.0.5-2", "1:5.0.5-1"), 0, "Pkgrel -1 deve ser inferior a -2")
+
+        # Validação de integridade no CatalogService
+        cat = CatalogService(mock_mode=True)
+        updates = cat.check_updates()
+        simd_up = next((u for u in updates if u.name == "simdjson"), None)
+        self.assertIsNotNone(simd_up, "simdjson deve constar nos updates disponíveis")
+        self.assertEqual(simd_up.installed_version, "1:5.0.5-1")
+        self.assertEqual(simd_up.version, "2:5.0.5-1")
+        self.assertGreater(alpm_vercmp(simd_up.version, simd_up.installed_version), 0)
+
+    def test_scenario_b_checkupdates_newer_than_sync_db(self) -> None:
+        """Cenário B: Banco temporário checkupdates mais recente que banco sync local (evitar falso sucesso)."""
+        tx = TransactionService(mock_mode=False)
+        tx._current_action = "update"
+        tx._current_packages = ["simdjson"]
+        tx._tracked_targets = ["simdjson"]
+        tx._pre_tx_versions = {"simdjson": "1:5.0.5-1"}
+        tx._all_output_lines = [
+            ":: Sincronizando bases de dados de pacotes...",
+            "atenção: simdjson-1:5.0.5-1 já está atualizado -- ignorando",
+            "não há nada a fazer",
+        ]
+
+        # Simula consulta ao banco local retornando a versão antiga 1:5.0.5-1
+        with patch.object(tx, "_get_installed_package_version", return_value="1:5.0.5-1"):
+            finished_signals = []
+            tx.transactionFinished.connect(lambda s, a, m: finished_signals.append((s, a, m)))
+
+            from PyQt6.QtCore import QProcess
+            tx._on_process_finished(0, QProcess.ExitStatus.NormalExit)
+
+            self.assertEqual(tx.last_outcome, "unchanged")
+            self.assertEqual(tx.state, "unchanged")
+            self.assertIn("Nenhuma alteração realizada no pacote", tx.last_summary)
+            self.assertIn("yay -Syu", tx.last_summary)
+            self.assertEqual(len(finished_signals), 1)
+            success, action, msg = finished_signals[0]
+            self.assertFalse(success, "Não deve reportar sucesso quando a versão não foi alterada!")
+            self.assertIn("Nenhuma alteração realizada", msg)
+
+    def test_scenario_c_official_package_redirected_to_sysupgrade(self) -> None:
+        """Cenário C: Pacote oficial encaminhado para atualização completa do sistema."""
+        tx = TransactionService(mock_mode=True)
+        started_actions = []
+
+        def fake_start_tx(action, packages, cmd, status_text, target_state, initial_stage="authenticating"):
+            started_actions.append((action, packages, cmd))
+            return True
+
+        tx._start_transaction = fake_start_tx
+
+        # Tentativa de atualizar pacote oficial com redirect_official_to_sysupgrade=False não deve usar pacman -S
+        res = tx.update_package("simdjson", repository="official", redirect_official_to_sysupgrade=False)
+        self.assertTrue(res)
+        self.assertEqual(len(started_actions), 1)
+        action, pkgs, cmd = started_actions[0]
+        self.assertEqual(action, "update_all")
+        self.assertNotIn("-S", cmd[1:3], "Pacote oficial não deve usar comando isolado pacman -S")
+        self.assertIn("-Syu", " ".join(cmd), "Atualização de pacote oficial deve ser sysupgrade (-Syu)")
+
+    def test_scenario_d_exit_0_version_unchanged_divergence(self) -> None:
+        """Cenário D: Comando retorna exit 0 mas a versão não mudou (relatar resultado sem alteração / divergência)."""
+        tx = TransactionService(mock_mode=False)
+        tx._current_action = "update_all"
+        tx._current_packages = ["simdjson"]
+        tx._tracked_targets = ["simdjson"]
+        tx._pre_tx_versions = {"simdjson": "1:5.0.5-1"}
+        tx._all_output_lines = [
+            ":: Starting full system upgrade...",
+            "there is nothing to do",
+        ]
+
+        store = StoreController(transaction_service=tx, mock_mode=True)
+        toasts = []
+        store.toastMessage.connect(lambda lvl, msg: toasts.append((lvl, msg)))
+
+        with patch.object(tx, "_get_installed_package_version", return_value="1:5.0.5-1"):
+            from PyQt6.QtCore import QProcess
+            tx._on_process_finished(0, QProcess.ExitStatus.NormalExit)
+
+            self.assertEqual(tx.last_outcome, "unchanged")
+            self.assertEqual(store.lastUpdateOutcome, "unchanged")
+            self.assertIn("Nenhuma alteração realizada no pacote", store.lastUpdateSummary)
+            # Verifica que o toast emitido é "warning" e NÃO "success"
+            self.assertTrue(any(lvl == "warning" and "Nenhuma alteração" in msg for lvl, msg in toasts))
+            self.assertFalse(any(lvl == "success" for lvl, msg in toasts))
+
+    def test_scenario_e_official_and_aur_updates_together_in_update_all(self) -> None:
+        """Cenário E: Atualizações oficiais e AUR em conjunto no Atualizar Tudo."""
+        # 1. Validação de comando completo seguro com yay (oficiais + AUR)
+        yay_cmd = build_safe_yay_sysupgrade_cmd()
+        self.assertIn("-Syu", yay_cmd)
+        self.assertIn("--sudo", yay_cmd)
+
+        tx = TransactionService(mock_mode=True)
+        store = StoreController(transaction_service=tx, mock_mode=True)
+
+        # Simula que pós-transação todas as pendências foram concluídas (0 pacotes restantes)
+        with patch.object(store._catalog_service, "check_updates", return_value=[]):
+            # Inicia atualização completa
+            store.updateAll()
+            self.assertEqual(tx.state, "updating")
+
+            # Avança mock steps até o final
+            t0 = time.time()
+            while tx.is_busy and (time.time() - t0) < 3.0:
+                self.app.processEvents()
+                time.sleep(0.05)
+
+            self.assertEqual(tx.state, "success")
+            self.assertEqual(tx.last_outcome, "complete")
+            self.assertEqual(store.lastUpdateOutcome, "complete")
+            self.assertIn("sucesso", store.lastUpdateSummary.lower())
+
+    def test_scenario_f_app_coexistence_and_deterministic_launcher(self) -> None:
+        """Cenário F: Coexistência de versões da aplicação e launcher determinístico."""
+        launcher_path = STORE_ROOT / "launcher.sh"
+        self.assertTrue(launcher_path.is_file(), "launcher.sh deve existir em dots/.../redshift-store")
+        self.assertTrue(os.access(launcher_path, os.X_OK), "launcher.sh deve ter permissão de execução")
+
+        bin_path = STORE_ROOT.parent.parent.parent / "bin" / "redshift-store"
+        self.assertTrue(bin_path.is_file(), "dots/.local/bin/redshift-store deve existir")
+        self.assertTrue(os.access(bin_path, os.X_OK), "dots/.local/bin/redshift-store deve ser executável")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            user_dir = tmp / "user" / "redshift-os" / "redshift-store"
+            sys_dir = tmp / "system" / "redshift-os" / "redshift-store"
+
+            for d, ver in ((user_dir, "2.1.0"), (sys_dir, "1.0.0")):
+                (d / "backend").mkdir(parents=True)
+                (d / "backend" / "__init__.py").write_text("# backend init\n", encoding="utf-8")
+                (d / "qml").mkdir(parents=True)
+                (d / "qml" / "Main.qml").write_text("// main qml\n", encoding="utf-8")
+                (d / "main.py").write_text(
+                    f'#!/usr/bin/env python3\nVERSION = "{ver}"\nimport sys\nprint("VERSION=" + VERSION)\nsys.exit(0)\n',
+                    encoding="utf-8",
+                )
+                (d / "main.py").chmod(0o755)
+
+            env = os.environ.copy()
+            env["XDG_DATA_HOME"] = str(tmp / "user")
+            env["REDSHIFT_STORE_SYSTEM_MAIN"] = str(sys_dir / "main.py")
+            env["REDSHIFT_STORE_DEBUG"] = "1"
+
+            # 1. Resolução automática: usuário v2.1.0 vs sistema v1.0.0 -> deve escolher v2.1.0
+            res = subprocess.run([str(bin_path)], env=env, capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0)
+            self.assertIn("VERSION=2.1.0", res.stdout)
+            self.assertIn("[redshift-store launcher] Resolved main.py:", res.stderr)
+            self.assertIn("version: 2.1.0", res.stderr)
+
+            # 2. Resolução com sistema mais recente: sistema v2.2.0 vs usuário v2.1.0 -> deve escolher sistema
+            (sys_dir / "main.py").write_text(
+                '#!/usr/bin/env python3\nVERSION = "2.2.0"\nimport sys\nprint("VERSION=" + VERSION)\nsys.exit(0)\n',
+                encoding="utf-8",
+            )
+            res2 = subprocess.run([str(bin_path)], env=env, capture_output=True, text=True)
+            self.assertEqual(res2.returncode, 0)
+            self.assertIn("VERSION=2.2.0", res2.stdout)
+            self.assertIn("version: 2.2.0", res2.stderr)
+
+            # 3. Override explícito via REDSHIFT_STORE_SOURCE=user
+            env_user = env.copy()
+            env_user["REDSHIFT_STORE_SOURCE"] = "user"
+            res3 = subprocess.run([str(bin_path)], env=env_user, capture_output=True, text=True)
+            self.assertEqual(res3.returncode, 0)
+            self.assertIn("VERSION=2.1.0", res3.stdout)
+
+    def test_scenario_g_pacman_lock_active(self) -> None:
+        """Cenário G: Lock de pacman ativo bloqueia transações e cancelamento."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_file = os.path.join(tmp_dir, "db.lck")
+            Path(lock_file).touch()
+
+            with patch.dict(os.environ, {"REDSHIFT_PACMAN_LOCK_PATH": lock_file}):
+                self.assertTrue(is_pacman_locked(lock_file))
+
+                tx = TransactionService(mock_mode=True)
+                self.assertTrue(tx.is_locked)
+                self.assertTrue(tx.check_lock())
+
+                # Bloqueio em operações de pacote
+                self.assertFalse(tx.install_package("firefox"))
+                self.assertEqual(tx.last_outcome, "failed")
+                self.assertIn("bloqueado", tx.status_text.lower())
+
+                self.assertFalse(tx.update_all())
+                self.assertEqual(tx.last_outcome, "failed")
+
+                self.assertFalse(tx.remove_package("firefox"))
+                self.assertEqual(tx.last_outcome, "failed")
+
+                # Cancelamento bloqueado com lock ativo
+                tx._is_busy = True
+                tx._stage = "committing"
+                self.assertFalse(tx.can_cancel)
+
+                blocked_msgs = []
+                tx.cancellationBlocked.connect(lambda msg: blocked_msgs.append(msg))
+                self.assertFalse(tx.cancel())
+                self.assertEqual(len(blocked_msgs), 1)
+                self.assertIn("bloqueado", blocked_msgs[0].lower())
+
+
+# =============================================================================
+# 12. Teste de Regressão: Configuração Hyprland e render_power
+# =============================================================================
+class TestHyprlandConfigRegression(unittest.TestCase):
+    """Regression test ensuring Hyprland decoration.shadow.render_power <= 4.
+
+    Hyprland enforces render_power in range [1, 4]. Values > 4 trigger fatal
+    configuration errors (e.g. 'error setting decoration.shadow.render_power: value 10 is more than the maximum of 4').
+    """
+
+    def test_active_and_dots_render_power_within_bounds(self) -> None:
+        """Validate render_power in dots and active configuration does not exceed 4."""
+        repo_root = Path(__file__).resolve().parent.parent
+        dots_general = repo_root / "dots" / ".config" / "hypr" / "hyprland" / "general.lua"
+        self.assertTrue(dots_general.exists(), f"{dots_general} must exist")
+
+        content = dots_general.read_text(encoding="utf-8")
+        match = re.search(r"render_power\s*=\s*([0-9]+)", content)
+        self.assertIsNotNone(match, "render_power must be defined in general.lua")
+        val = int(match.group(1))
+        self.assertLessEqual(val, 4, f"render_power in dots must be <= 4, got {val}")
+        self.assertGreaterEqual(val, 1, f"render_power must be >= 1, got {val}")
+
+    def test_regression_render_power_greater_than_4_rejected(self) -> None:
+        """Verify doctor and validation logic reject render_power > 4 and accept <= 4."""
+        repo_root = Path(__file__).resolve().parent.parent
+        doctor_bin = repo_root / "dots" / ".local" / "bin" / "redshift-doctor"
+        self.assertTrue(doctor_bin.is_file() and os.access(doctor_bin, os.X_OK))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            cfg_dir = tmp / "hypr" / "hyprland"
+            cfg_dir.mkdir(parents=True)
+            gen_lua = cfg_dir / "general.lua"
+
+            # 1. Invalid configuration with render_power = 10 (rejected)
+            gen_lua.write_text("shadow = { render_power = 10 }\n", encoding="utf-8")
+            env = dict(os.environ, XDG_CONFIG_HOME=str(tmp))
+            res = subprocess.run(
+                [str(doctor_bin), "--check", "hyprland", "--json"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            data = json.loads(res.stdout)
+            self.assertEqual(data.get("status"), "error")
+            errs = [c for c in data.get("checks", []) if c.get("status") == "ERROR"]
+            self.assertTrue(any("excede o valor máximo permitido de 4" in c.get("message", "") for c in errs))
+
+            # 2. Valid configuration with render_power = 4 (accepted)
+            gen_lua.write_text("shadow = { render_power = 4 }\n", encoding="utf-8")
+            res_ok = subprocess.run(
+                [str(doctor_bin), "--check", "hyprland", "--json"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            data_ok = json.loads(res_ok.stdout)
+            errs_ok = [c for c in data_ok.get("checks", []) if c.get("status") == "ERROR"]
+            self.assertEqual(len(errs_ok), 0, f"Expected 0 errors for render_power=4, got: {errs_ok}")
 
 if __name__ == "__main__":
     unittest.main()

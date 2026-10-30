@@ -6,10 +6,13 @@ Integrates Redshift Store with end-4 (illogical-impulse) and Caelestia Shell.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger("redshift_store.theme")
 
 from PyQt6.QtCore import (
     QFileSystemWatcher,
@@ -234,14 +237,19 @@ class ThemeService(QObject):
                 state_dir / "quickshell/user/generated/color.txt",
             )
         )
+        self._material_colors_scss_path = Path(
+            os.environ.get(
+                "REDSHIFT_MATERIAL_COLORS_SCSS_PATH",
+                state_dir / "quickshell/user/generated/material-colors.scss",
+            )
+        )
 
-        # State storage
+        # State storage (strictly derived from global Rice theme files)
         self._colors: Dict[str, str] = {}
         self._is_dark: bool = True
         self._scheme_variant: str = "scheme-tonal-spot"
         self._wallpaper_path: str = ""
         self._frontend_mode: str = "end4"
-        self._preview_override_is_dark: Optional[bool] = None
 
         # Debounce timer for inotify file events (80ms)
         self._debounce_timer = QTimer(self)
@@ -267,6 +275,7 @@ class ThemeService(QObject):
         watched_files = [
             self._colors_json_path,
             self._caelestia_scheme_path,
+            self._material_colors_scss_path,
             self._ui_switch_path,
             self._wallpaper_path_file,
             self._applied_scheme_type_path,
@@ -299,15 +308,13 @@ class ThemeService(QObject):
 
     def _on_debounced_change(self) -> None:
         """Handles settled file change events and re-attaches any unlinked inodes."""
-        # Reset preview override so disk changes take precedence
-        self._preview_override_is_dark = None
-
         # Check if any watched file or directory was replaced atomically (new inode)
         current_dirs = set(self._watcher.directories())
         current_files = set(self._watcher.files())
         for file_path in [
             self._colors_json_path,
             self._caelestia_scheme_path,
+            self._material_colors_scss_path,
             self._ui_switch_path,
             self._wallpaper_path_file,
             self._applied_scheme_type_path,
@@ -493,107 +500,122 @@ class ThemeService(QObject):
         detected_dark = True
         found_source = False
 
-        if self._preview_override_is_dark is not None:
-            detected_dark = self._preview_override_is_dark
-            raw_colors = dict(FALLBACK_M3_DARK if detected_dark else FALLBACK_M3_LIGHT)
-            found_source = True
-        else:
-            def _to_snake_dict(d: Dict[str, Any]) -> Dict[str, str]:
-                res: Dict[str, str] = {}
-                for k, v in d.items():
-                    if isinstance(v, str):
-                        clean_k = k.replace("-", "_")
-                        snake_k = re.sub(r"([A-Z])", r"_\1", clean_k).lower()
-                        snake_k = re.sub(r"_+", "_", snake_k).strip("_")
-                        res[snake_k] = v.strip()
-                return res
+        def _to_snake_dict(d: Dict[str, Any]) -> Dict[str, str]:
+            res: Dict[str, str] = {}
+            for k, v in d.items():
+                if isinstance(v, str):
+                    clean_k = k.replace("-", "_")
+                    snake_k = re.sub(r"([A-Z])", r"_\1", clean_k).lower()
+                    snake_k = re.sub(r"_+", "_", snake_k).strip("_")
+                    res[snake_k] = v.strip()
+            return res
 
-            colors_data: Dict[str, str] = {}
-            colors_mtime: float = 0.0
-            if self._colors_json_path.exists():
-                try:
-                    c_data = json.loads(self._colors_json_path.read_text(encoding="utf-8"))
-                    if isinstance(c_data, dict) and len(c_data) > 0:
-                        colors_data = _to_snake_dict(c_data)
-                        colors_mtime = self._colors_json_path.stat().st_mtime
-                except Exception:
-                    pass
+        colors_data: Dict[str, str] = {}
+        colors_mtime: float = 0.0
+        if self._colors_json_path.exists():
+            try:
+                c_data = json.loads(self._colors_json_path.read_text(encoding="utf-8"))
+                if isinstance(c_data, dict) and len(c_data) > 0:
+                    colors_data = _to_snake_dict(c_data)
+                    colors_mtime = self._colors_json_path.stat().st_mtime
+            except Exception:
+                pass
 
-            scheme_colours: Dict[str, str] = {}
-            scheme_mode: Optional[str] = None
-            scheme_variant: Optional[str] = None
-            scheme_mtime: float = 0.0
-            if self._caelestia_scheme_path.exists():
-                try:
-                    s_data = json.loads(self._caelestia_scheme_path.read_text(encoding="utf-8"))
-                    if isinstance(s_data, dict):
-                        cols = s_data.get("colours")
-                        if isinstance(cols, dict) and len(cols) > 0:
-                            scheme_colours = _to_snake_dict(cols)
-                            scheme_mode = s_data.get("mode")
-                            if s_data.get("variant"):
-                                scheme_variant = str(s_data["variant"])
-                            scheme_mtime = self._caelestia_scheme_path.stat().st_mtime
-                except Exception:
-                    pass
+        # Optional material-colors.scss support (end-4 / Matugen)
+        if self._material_colors_scss_path.exists():
+            try:
+                scss_text = self._material_colors_scss_path.read_text(encoding="utf-8")
+                scss_tokens: Dict[str, str] = {}
+                for match in re.finditer(r"\$([a-zA-Z0-9_-]+)\s*:\s*(#[0-9a-fA-F]{3,8})", scss_text):
+                    clean_k = match.group(1).replace("-", "_")
+                    snake_k = re.sub(r"([A-Z])", r"_\1", clean_k).lower()
+                    snake_k = re.sub(r"_+", "_", snake_k).strip("_")
+                    scss_tokens[snake_k] = match.group(2).strip()
+                scss_mtime = self._material_colors_scss_path.stat().st_mtime
+                if not colors_data or scss_mtime > colors_mtime:
+                    for sk, sv in scss_tokens.items():
+                        if sk not in colors_data:
+                            colors_data[sk] = sv
+                    if not colors_mtime:
+                        colors_mtime = scss_mtime
+            except Exception:
+                pass
 
-            # Prioridade Inteligente:
-            # - Caelestia como fonte primária quando:
-            #   * frontend_mode == "caelestia" (com scheme_colours disponível)
-            #   * ou scheme.json tiver st_mtime mais recente que colors.json (com scheme_colours disponível)
-            #   * ou colors.json não existir/estiver vazio
-            # - end-4 como fonte primária quando:
-            #   * frontend_mode == "end4" (e colors.json for mais recente ou igual)
-            #   * ou scheme.json não existir/estiver vazio
-            use_caelestia_primary = False
-            if scheme_colours:
-                if not colors_data:
-                    use_caelestia_primary = True
-                elif self._frontend_mode == "caelestia":
-                    use_caelestia_primary = True
-                elif self._frontend_mode == "end4":
-                    use_caelestia_primary = (scheme_mtime > colors_mtime)
-                else:
-                    use_caelestia_primary = (scheme_mtime > colors_mtime)
+        scheme_colours: Dict[str, str] = {}
+        scheme_mode: Optional[str] = None
+        scheme_variant: Optional[str] = None
+        scheme_mtime: float = 0.0
+        if self._caelestia_scheme_path.exists():
+            try:
+                s_data = json.loads(self._caelestia_scheme_path.read_text(encoding="utf-8"))
+                if isinstance(s_data, dict):
+                    cols = s_data.get("colours")
+                    if isinstance(cols, dict) and len(cols) > 0:
+                        scheme_colours = _to_snake_dict(cols)
+                        scheme_mode = s_data.get("mode")
+                        if s_data.get("variant"):
+                            scheme_variant = str(s_data["variant"])
+                        scheme_mtime = self._caelestia_scheme_path.stat().st_mtime
+            except Exception:
+                pass
 
-            colors_dark = _calc_is_dark(colors_data.get("background", "#141318")) if colors_data else True
-            if scheme_mode in ("dark", "light"):
-                scheme_dark = (scheme_mode == "dark")
-            elif "background" in scheme_colours:
-                scheme_dark = _calc_is_dark(scheme_colours["background"])
+        # Prioridade Inteligente:
+        # - Caelestia como fonte primária quando:
+        #   * frontend_mode == "caelestia" (com scheme_colours disponível)
+        #   * ou scheme.json tiver st_mtime mais recente que colors.json (com scheme_colours disponível)
+        #   * ou colors.json não existir/estiver vazio
+        # - end-4 como fonte primária quando:
+        #   * frontend_mode == "end4" (e colors.json for mais recente ou igual)
+        #   * ou scheme.json não existir/estiver vazio
+        use_caelestia_primary = False
+        if scheme_colours:
+            if not colors_data:
+                use_caelestia_primary = True
+            elif self._frontend_mode == "caelestia":
+                use_caelestia_primary = True
+            elif self._frontend_mode == "end4":
+                use_caelestia_primary = (scheme_mtime > colors_mtime)
             else:
-                scheme_dark = colors_dark
-            same_polarity = (colors_dark == scheme_dark)
+                use_caelestia_primary = (scheme_mtime > colors_mtime)
 
-            if use_caelestia_primary:
-                raw_colors = dict(colors_data) if same_polarity else {}
-                raw_colors.update(scheme_colours)
-                found_source = True
-                detected_dark = scheme_dark
+        colors_dark = _calc_is_dark(colors_data.get("background", "#141318")) if colors_data else True
+        if scheme_mode in ("dark", "light"):
+            scheme_dark = (scheme_mode == "dark")
+        elif "background" in scheme_colours:
+            scheme_dark = _calc_is_dark(scheme_colours["background"])
+        else:
+            scheme_dark = colors_dark
+        same_polarity = (colors_dark == scheme_dark)
 
-                if scheme_variant and applied_mtime <= scheme_mtime:
-                    self._scheme_variant = scheme_variant
-            elif colors_data:
-                raw_colors = dict(scheme_colours) if same_polarity else {}
-                raw_colors.update(colors_data)
-                found_source = True
-                detected_dark = colors_dark
-            elif scheme_colours:
-                raw_colors = dict(scheme_colours)
-                found_source = True
+        if use_caelestia_primary:
+            raw_colors = dict(colors_data) if same_polarity else {}
+            raw_colors.update(scheme_colours)
+            found_source = True
+            detected_dark = scheme_dark
 
-                if scheme_mode in ("dark", "light"):
-                    detected_dark = (scheme_mode == "dark")
-                elif "background" in scheme_colours:
-                    detected_dark = _calc_is_dark(scheme_colours["background"])
+            if scheme_variant and applied_mtime <= scheme_mtime:
+                self._scheme_variant = scheme_variant
+        elif colors_data:
+            raw_colors = dict(scheme_colours) if same_polarity else {}
+            raw_colors.update(colors_data)
+            found_source = True
+            detected_dark = colors_dark
+        elif scheme_colours:
+            raw_colors = dict(scheme_colours)
+            found_source = True
 
-                if scheme_variant and applied_mtime <= scheme_mtime:
-                    self._scheme_variant = scheme_variant
+            if scheme_mode in ("dark", "light"):
+                detected_dark = (scheme_mode == "dark")
+            elif "background" in scheme_colours:
+                detected_dark = _calc_is_dark(scheme_colours["background"])
 
-            # Base fallback if no valid theme file found
-            if not found_source:
-                detected_dark = True
-                raw_colors = dict(FALLBACK_M3_DARK)
+            if scheme_variant and applied_mtime <= scheme_mtime:
+                self._scheme_variant = scheme_variant
+
+        # Base fallback if no valid theme file found
+        if not found_source:
+            detected_dark = True
+            raw_colors = dict(FALLBACK_M3_DARK)
 
         # Merge raw tokens over the appropriate fallback to ensure all 49 tokens always exist
         base_palette = FALLBACK_M3_DARK if detected_dark else FALLBACK_M3_LIGHT
@@ -612,21 +634,24 @@ class ThemeService(QObject):
 
     @pyqtSlot()
     def togglePreviewMode(self) -> None:
-        """Toggles in-memory preview between dark and light mode, returning to system palette on toggle back."""
-        if self._preview_override_is_dark is None:
-            self._preview_override_is_dark = not self._is_dark
-        else:
-            self._preview_override_is_dark = None
-
-        self.reloadTheme()
+        """
+        No-op compatibility slot. Redshift Store is exclusively a consumer of the
+        global Rice Material You theme (Matugen/end-4/Caelestia). Local theme overrides
+        are disallowed.
+        """
+        logger.info(
+            "Local theme toggle ignored: Redshift Store strictly adheres to global Rice Material You theme."
+        )
 
     @pyqtSlot()
     def toggleColorScheme(self) -> None:
         """
-        Toggles color scheme mode. If in sandbox/mock, toggles in-memory preview.
-        Safe alias for togglePreviewMode in tests and UI actions.
+        No-op compatibility slot for external interfaces. Local theme overrides
+        are disallowed.
         """
-        self.togglePreviewMode()
+        logger.info(
+            "Local color scheme toggle ignored: Redshift Store strictly adheres to global Rice Material You theme."
+        )
 
     # -----------------------------------------------------------------------
     # Qt Properties (pyqtProperty)
@@ -649,11 +674,19 @@ class ThemeService(QObject):
         return self._scheme_variant
 
     @pyqtProperty(str, notify=themeChanged)
+    def variant(self) -> str:
+        return self._scheme_variant
+
+    @pyqtProperty(str, notify=themeChanged)
     def wallpaperPath(self) -> str:
         return self._wallpaper_path
 
     @pyqtProperty(str, notify=themeChanged)
     def frontendMode(self) -> str:
+        return self._frontend_mode
+
+    @pyqtProperty(str, notify=themeChanged)
+    def frontend(self) -> str:
         return self._frontend_mode
 
     @pyqtProperty(str, notify=themeChanged)
