@@ -1708,6 +1708,7 @@ class TestPackageUpdateAndLauncherResolution(unittest.TestCase):
             env = os.environ.copy()
             env["XDG_DATA_HOME"] = str(tmp / "user")
             env["REDSHIFT_STORE_SYSTEM_MAIN"] = str(sys_dir / "main.py")
+            env["REDSHIFT_STORE_DEBUG"] = "1"
 
             # 1. Resolução automática: usuário v2.1.0 vs sistema v1.0.0 -> deve escolher v2.1.0
             res = subprocess.run([str(bin_path)], env=env, capture_output=True, text=True)
